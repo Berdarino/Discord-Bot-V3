@@ -1,0 +1,25 @@
+services:
+  bot:
+    build: .
+    image: discord-bot-v3:latest
+    container_name: discord-bot-v3
+
+    # Secrets stay on the host; nothing is baked into the image.
+    env_file: .env
+
+    # Keep the bot up across crashes and host reboots, but not after an
+    # explicit `docker compose stop`.
+    restart: unless-stopped
+
+    # PID 1 that reaps zombies and forwards SIGTERM to the bot.
+    init: true
+
+    # Give the gateway connection time to close cleanly on shutdown.
+    stop_grace_period: 15s
+
+    # Without this, a long-running bot's logs grow until the disk fills.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

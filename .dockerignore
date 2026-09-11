@@ -1,0 +1,26 @@
+# Secrets — supplied at runtime via env_file, never baked into the image
+.env
+
+# Local virtualenv (the image builds its own)
+.venv
+
+# VCS and tooling
+.git
+.gitignore
+.python-version
+
+# Tool caches
+.ruff_cache
+
+# Python artefacts
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Docker + docs
+Dockerfile
+.dockerignore
+compose.yaml

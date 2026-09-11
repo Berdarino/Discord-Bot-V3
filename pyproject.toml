@@ -1,0 +1,63 @@
+[project]
+name = "discord-bot-v3"
+version = "0.1.0"
+description = "A Discord bot built with Pycord"
+readme = "README.md"
+authors = [
+    { name = "PCloud-Bernard", email = "pcloud.bernard@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "aiohttp>=3.14.3",
+    "aiomysql>=0.3.2",
+    "py-cord>=2.8.1",
+    "python-dotenv>=1.2.3",
+    "redis>=8.1.0",
+    "tzdata>=2026.3",
+]
+
+[project.scripts]
+discord-bot-v3 = "discord_bot_v3.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.12.12,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "PTH",  # use pathlib
+    "RUF",  # ruff-specific
+]
+
+# NOT enabled, deliberately:
+#   FA  (flake8-future-annotations) would add `from __future__ import annotations`
+#       to cog modules. Pycord reads the `discord.Option` objects in command
+#       signatures at runtime; PEP 563 stringifies them and every option silently
+#       degrades to a required string.
+#   TC  (flake8-type-checking) would move runtime-needed imports into
+#       `if TYPE_CHECKING:` blocks, breaking the same introspection.
+
+[tool.ruff.lint.per-file-ignores]
+# Cog signatures use `discord.Option(...)` as a default/annotation, which
+# bugbear flags as a mutable call in a default argument. It is how Pycord
+# declares options.
+"src/discord_bot_v3/cogs/*.py" = ["B008"]
