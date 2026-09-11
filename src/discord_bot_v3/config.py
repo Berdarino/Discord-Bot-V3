@@ -13,6 +13,12 @@ class ConfigError(RuntimeError):
     """Raised when the environment is missing or malformed."""
 
 
+# V2 greeted every join with this, and the joke is the point, so it stays the
+# default rather than becoming a required setting. WELCOME_MESSAGE overrides it;
+# an empty WELCOME_MESSAGE turns greetings off entirely.
+DEFAULT_WELCOME_MESSAGE = "Who simply add people in again... smh"
+
+
 def _parse_timezone(raw: str | None) -> str:
     """Validate the configured zone now, rather than when a reminder is set."""
     name = (raw or "Asia/Kuala_Lumpur").strip() or "Asia/Kuala_Lumpur"
@@ -46,6 +52,17 @@ def _parse_mysql() -> MysqlConfig | None:
         password=os.getenv("MYSQL_PASSWORD", ""),
         name=os.getenv("MYSQL_DB", "discord_v3").strip() or "discord_v3",
     )
+
+
+def _parse_welcome_message(raw: str | None) -> str:
+    """Read the join greeting, distinguishing "unset" from "deliberately off".
+
+    An absent variable means the caller never thought about it and gets the
+    default; one present but blank is an explicit "post nothing".
+    """
+    if raw is None:
+        return DEFAULT_WELCOME_MESSAGE
+    return raw.strip()
 
 
 def _parse_guild_ids(raw: str | None) -> list[int]:
@@ -105,6 +122,12 @@ class Config:
     # Optional: channel where the daily birthday task posts. Birthdays can
     # still be saved without it, but no public messages are sent.
     birthday_channel_id: int | None = None
+    # Optional: channel that message edits and deletions are logged to.
+    # Unset means the listeners resolve nothing and post nothing.
+    log_channel_id: int | None = None
+    # Posted to a guild's system channel when someone joins. ``{member}``
+    # becomes a mention and ``{guild}`` the server name. Empty posts nothing.
+    welcome_message: str = DEFAULT_WELCOME_MESSAGE
 
     @classmethod
     def from_env(cls) -> Config:
@@ -129,4 +152,6 @@ class Config:
             birthday_channel_id=_parse_snowflake(
                 os.getenv("BIRTHDAY_CHANNEL_ID"), "BIRTHDAY_CHANNEL_ID"
             ),
+            log_channel_id=_parse_snowflake(os.getenv("LOG_CHANNEL_ID"), "LOG_CHANNEL_ID"),
+            welcome_message=_parse_welcome_message(os.getenv("WELCOME_MESSAGE")),
         )

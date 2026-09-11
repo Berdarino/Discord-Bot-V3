@@ -333,9 +333,11 @@ async def _deliver(
 def _summarize(deleted: list[discord.Message]) -> str:
     """Describe a purge as a per-author tally.
 
-    Message *content* is deliberately not echoed back: reading it needs the
-    privileged ``message_content`` intent, which this bot does not request, so
-    every ``Message.content`` here would be an empty string.
+    Message *content* is deliberately not echoed back. The bot does request
+    the privileged ``message_content`` intent (the edit/delete log needs it),
+    so the text is available here -- but quoting up to 100 messages would blow
+    past Discord's 2000 character limit, and a purge summary is a receipt, not
+    a transcript. The DM log in ``general.py`` is where content belongs.
     """
     if not deleted:
         return "Nothing to delete — the channel had no recent messages."

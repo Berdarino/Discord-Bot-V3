@@ -17,6 +17,10 @@ _log = logging.getLogger(__name__)
 
 COGS_PACKAGE = "discord_bot_v3.cogs"
 
+# How many recent messages to keep for the edit/delete log. See the comment at
+# the `max_messages` argument below.
+MESSAGE_CACHE = 5000
+
 
 class DiscordBot(discord.Bot):
     """A slash-command bot that loads its features from the cogs package."""
@@ -47,9 +51,20 @@ class DiscordBot(discord.Bot):
         # birthday feature. This also needs the Server Members Intent enabled
         # in the Discord Developer Portal.
         intents.members = True
+        # Message text, for the edit and delete log in the General cog. Also
+        # privileged: without Message Content Intent ticked in the Developer
+        # Portal, Discord refuses the gateway connection outright rather than
+        # quietly blanking the field.
+        intents.message_content = True
 
         super().__init__(
             intents=intents,
+            # The edit/delete log can only show what a message said *before*
+            # for messages still in this cache; everything older degrades to a
+            # raw event with no content. Pycord defaults to 1000, which on a
+            # chatty server is a couple of hours. Raising it widens the window
+            # at roughly a kilobyte per message.
+            max_messages=MESSAGE_CACHE,
             # Commands register instantly in these guilds. Leave GUILD_IDS unset
             # in production so commands register globally instead.
             debug_guilds=config.guild_ids or None,

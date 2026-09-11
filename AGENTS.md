@@ -14,8 +14,8 @@ uv sync                              # install, including dev deps
 cp .env.example .env                 # then fill it in -- see below
 uv run python -m discord_bot_v3      # run the bot
 
-uv run python tests/run.py           # all 18 tests
-uv run python tests/run.py --offline # the 6 needing no services
+uv run python tests/run.py           # all 20 tests
+uv run python tests/run.py --offline # the 8 needing no services
 uv run python tests/run.py test_media  # one test, full output
 
 uv run ruff check . && uv run ruff format .
@@ -74,6 +74,29 @@ answers everything today. Adding that header is the single most likely
 **The bot owner is whoever owns the application in the Discord Developer
 Portal.** There is no `OWNER_ID` env var and there should not be one.
 
+**The message edit/delete log goes to `LOG_CHANNEL_ID`, not to a DM.** V2 DMed
+the owner; this was changed deliberately, because the point of the feature is a
+readable, searchable record of who edited and deleted what. The channel is
+resolved once and cached, and any permanent failure (missing, invisible, not a
+guild text channel, cannot post) disables logging instead of failing on every
+event. Events in the log channel itself are skipped, or tidying the log would
+write more log.
+
+**`message_content` is a hard startup dependency now.** The members intent is
+merely withheld when it is not ticked in the Developer Portal; the message
+content intent makes Discord **refuse the gateway connection**, so a missing
+tick is a bot that will not start, not a feature that quietly degrades.
+
+**`MESSAGE_CACHE` in `bot.py` is what decides how much the log can show.**
+Only messages still in Pycord's cache have a `before` to diff or content to
+quote; everything else degrades to an `on_raw_*` event. Raising it is the one
+lever that widens the window.
+
+**`on_message_edit` fires without an edit.** A link unfurling into an embed, or
+a pin, dispatches the same event. Compare `before.content` to `after.content`
+before doing anything. The raw form has no `before` to compare, so it keys off
+`edited_timestamp` being present in the payload instead.
+
 **Tables are created per feature, on demand.** `Database.ensure_schema` runs a
 feature's own DDL when its cog loads; there is no central migration file and no
 pre-baked schema. Add a `SCHEMA` constant beside the feature that needs it.
@@ -109,15 +132,20 @@ upside.
 
 ## State of play
 
-13 commands across 6 cogs: `General`, `Gifs`, `MediaSearch`, `Owner`,
-`Pokemon`, `Reminders`. All 18 tests pass; ruff is clean.
+15 commands across 7 cogs: `General`, `Gifs`, `MediaSearch`, `Members`,
+`Owner`, `Pokemon`, `Reminders`. All 20 tests pass; ruff is clean.
+
+`General` owns no commands at all — it is the three gateway listeners
+(`on_member_join`, `on_message_edit`, `on_message_delete`) plus their `on_raw_*`
+fallbacks. Edits and deletions are logged to `LOG_CHANNEL_ID`; the join greeting
+goes to the guild's system channel. `Members` listens to `on_member_join` too; the two are deliberately
+separate, so the greeting still works on a bot running without MySQL.
 
 Not done yet: **nothing has been run against a real Discord gateway.** Every
 test drives the objects directly or hits the third-party APIs. Ported from V2
-so far are `/send`, `/delete`, `/gif`, `/anime`, `/manga`, `/pokemon` and
-reminders. Still to port: members/birthdays, quotes, LLM chat (Gemini), and the
-event handlers (`on_message_edit`, `on_message_delete`, `on_member_join`) with
-the birthday task.
+so far are `/send`, `/delete`, `/gif`, `/anime`, `/manga`, `/pokemon`,
+reminders, members/birthdays and the event handlers. Still to port: quotes and
+LLM chat (Gemini).
 
 One known gap: `AniListClient.details()` has never run against the live API,
 because AniList has been 403 throughout. Its parser is unit-tested and every
