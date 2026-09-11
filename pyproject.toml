@@ -61,3 +61,13 @@ select = [
 # bugbear flags as a mutable call in a default argument. It is how Pycord
 # declares options.
 "src/discord_bot_v3/cogs/*.py" = ["B008"]
+
+# The suite is a set of standalone scripts that print what they check, not a
+# library. Long diagnostic lines and %-formatted prints are the point there,
+# and `list(x)[0]` reads more plainly than `next(iter(x))` in an assertion.
+"tests/*.py" = [
+    "E501",   # long print/diagnostic lines
+    "UP031",  # %-format in prints
+    "RUF015", # list(...)[0] over next(iter(...))
+    "C408",   # dict(...) builders in test fixtures
+]
