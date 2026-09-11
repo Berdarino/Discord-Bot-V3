@@ -9,13 +9,21 @@ from discord_bot_v3.config import Config
 from discord_bot_v3.services.database import Database
 from discord_bot_v3.services.reminders import MAX_HORIZON, ReminderStore
 
+# These tests create, fill and DROP tables, so they must never run against the
+# database the bot actually uses -- a suite run would wipe live reminders. The
+# bot creates a database on connect, so pointing at a "_test" sibling needs no
+# setup and leaves production data alone.
+TEST_DB_SUFFIX = "_test"
+
 KL = ZoneInfo("Asia/Kuala_Lumpur")
 USER, CHAN = 424242424242424242, 555
 
 
 async def main():
     cfg = Config.from_env().mysql
-    db = Database(host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password, name=cfg.name)
+    name = cfg.name + TEST_DB_SUFFIX
+    print(f"target database: {name}")
+    db = Database(host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password, name=name)
     await db.connect()
     store = ReminderStore(db)
     try:

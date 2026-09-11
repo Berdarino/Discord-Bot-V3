@@ -55,6 +55,12 @@ class Members(commands.Cog):
                 guild_id=guild.id, month_days=_birthday_keys(today)
             )
             for member in birthdays:
+                # The row outlives the membership: birthdays are kept so that
+                # someone who rejoins does not have to set theirs again. Which
+                # means the table is not a guest list, and announcing straight
+                # from it would ping people who left months ago.
+                if guild.get_member(member.user_id) is None:
+                    continue
                 await channel.send(
                     f"Happy birthday, <@{member.user_id}>! 🎉",
                     embed=_birthday_embed(member),

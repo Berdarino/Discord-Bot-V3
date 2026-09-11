@@ -18,6 +18,8 @@ uv run python tests/run.py           # all 20 tests
 uv run python tests/run.py --offline # the 8 needing no services
 uv run python tests/run.py test_media  # one test, full output
 
+# The mariadb tests use <MYSQL_DB>_test, not MYSQL_DB. Never point them at live data.
+
 uv run ruff check . && uv run ruff format .
 ```
 
@@ -42,6 +44,13 @@ reads the `discord.Option` objects out of command signatures at runtime. PEP
 no error, just a broken command. The `FA` and `TC` ruff rules are disabled for
 exactly this reason; see the comment in `pyproject.toml`. Service modules are
 fine, and most of them do use it.
+
+**The database tests run against `<MYSQL_DB>_test`, never the live database.**
+They create, fill and `DROP` their tables, so pointing them at `MYSQL_DB` means
+a suite run silently wipes real reminders — which is exactly what used to
+happen. `Database.connect` creates a database that does not exist, so the
+`_test` sibling needs no setup. Any new test that touches MySQL must use
+`TEST_DB_SUFFIX` too.
 
 **Pycord is not discord.py.** `setup()` and `add_cog()` are *synchronous*.
 There is no `setup_hook`. `on_ready` fires again on every reconnect, so
@@ -86,6 +95,15 @@ write more log.
 merely withheld when it is not ticked in the Developer Portal; the message
 content intent makes Discord **refuse the gateway connection**, so a missing
 tick is a bot that will not start, not a feature that quietly degrades.
+
+**Two sources describe the same event, and merging them naively double-logs
+everything.** Discord sends a specific gateway event (*what* happened) *and* an
+audit log entry (*who* did it) for most moderator actions. `serverlog.py`
+resolves this with `_AUDIT_HANDLED`: six actions belong to dedicated handlers
+that know more than the audit entry does, and `on_audit_log_entry` skips exactly
+those and renders everything else generically. Adding a handler for an action
+means adding it to that set, or it is logged twice; removing one means removing
+it, or it stops being logged at all.
 
 **`MESSAGE_CACHE` in `bot.py` is what decides how much the log can show.**
 Only messages still in Pycord's cache have a `before` to diff or content to
@@ -132,20 +150,27 @@ upside.
 
 ## State of play
 
-15 commands across 7 cogs: `General`, `Gifs`, `MediaSearch`, `Members`,
-`Owner`, `Pokemon`, `Reminders`. All 20 tests pass; ruff is clean.
+15 commands across 8 cogs: `General`, `Gifs`, `MediaSearch`, `Members`,
+`Owner`, `Pokemon`, `Reminders`, `ServerLog`. All 20 tests pass; ruff is clean.
 
-`General` owns no commands at all — it is the three gateway listeners
-(`on_member_join`, `on_message_edit`, `on_message_delete`) plus their `on_raw_*`
-fallbacks. Edits and deletions are logged to `LOG_CHANNEL_ID`; the join greeting
-goes to the guild's system channel. `Members` listens to `on_member_join` too; the two are deliberately
-separate, so the greeting still works on a bot running without MySQL.
+Neither `General` nor `ServerLog` owns a command. They are split by audience:
+`General` posts the public welcome to the guild's system channel, `ServerLog`
+writes ten listeners' worth of member, message and moderation activity to
+`LOG_CHANNEL_ID` and does not load without it. Three cogs listen to
+`on_member_join` — one greets, one logs, one writes the database row — and the
+split is deliberate, so each works when the other two are off.
 
-Not done yet: **nothing has been run against a real Discord gateway.** Every
-test drives the objects directly or hits the third-party APIs. Ported from V2
-so far are `/send`, `/delete`, `/gif`, `/anime`, `/manga`, `/pokemon`,
-reminders, members/birthdays and the event handlers. Still to port: quotes and
-LLM chat (Gemini).
+Departed members keep their `members` row, so a rejoin does not lose a birthday.
+That makes the table not a guest list, and the announcer therefore checks
+`guild.get_member` before posting; without that check it pings people who left.
+
+The bot has been run against a real gateway and exercised by hand on a test
+server; the suite itself still drives objects directly or hits third-party APIs
+rather than connecting. Ported from V2 so far are `/send`, `/delete`, `/gif`, `/anime`, `/manga`, `/pokemon`,
+reminders, members/birthdays and the event handlers. Still to port: **LLM chat
+(Gemini)**. Quotes are not a separate feature — V2 has no quote command, and
+`QUOTE_TABLE` exists only to feed example phrasings into the AI's role message,
+so it lands with the chat port or not at all.
 
 One known gap: `AniListClient.details()` has never run against the live API,
 because AniList has been 403 throughout. Its parser is unit-tested and every

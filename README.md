@@ -99,7 +99,8 @@ src/discord_bot_v3/
 ├── config.py       environment parsing and validation
 ├── ui.py           reusable components (ConfirmView)
 ├── cogs/           one module per feature — auto-discovered at startup
-│   ├── general.py  joins, message edit/delete log — no commands
+│   ├── general.py  the public welcome on join — no commands
+│   ├── serverlog.py  member, message and moderation log — no commands
 │   ├── members.py  /birthday, member sync, daily birthday task
 │   ├── gif.py      /gif — needs KLIPY_API_KEY
 │   ├── media.py    /anime, /manga
@@ -113,6 +114,7 @@ src/discord_bot_v3/
     ├── mal.py      MyAnimeList API v2 (fallback)
     ├── tcgdex.py   TCGdex — Pokémon TCG Pocket
     ├── database.py MySQL/MariaDB pool (no schema of its own)
+    ├── eventlog.py the log channel and its shared formatting
     ├── cache.py    Redis cache (optional, best-effort)
     └── reminders.py reminders table + queries
 ```
@@ -407,87 +409,72 @@ The **Message Content Intent** is required too, for the event listeners below.
 
 ### Event listeners
 
-Three gateway events are watched in `general.py`. None of them is a command, and
-none writes to the database.
+Two cogs, split by audience. [`general.py`](src/discord_bot_v3/cogs/general.py)
+posts one public **welcome** to the server's system channel; it needs no
+database and no log channel, because a greeting should not depend on either.
+Everything else goes to [`serverlog.py`](src/discord_bot_v3/cogs/serverlog.py),
+which writes to `LOG_CHANNEL_ID` — set it, or that cog does not load at all.
 
-**A new member is greeted** in the server's *system channel* — the channel
-Discord itself posts join notices to. The text comes from `WELCOME_MESSAGE`,
-which defaults to V2's `Who simply add people in again... smh`; `{member}`
-becomes a mention and `{guild}` the server name. Setting the variable to nothing
-turns the greeting off, and a server with no system channel silently gets none.
-Only the joining member can be mentioned, whatever the configured text contains,
-so a stray `@everyone` in the setting cannot ping the server. The member's
-*database* record is written separately by `members.py`, so joins are still
-recorded on a bot running without MySQL — and still greeted on one running
-without a system channel.
+The welcome text comes from `WELCOME_MESSAGE`, defaulting to V2's
+`Who simply add people in again... smh`; `{member}` becomes a mention and
+`{guild}` the server name. Setting it blank turns the greeting off, and a server
+with no system channel silently gets none. Only the joining member can be
+mentioned, whatever the configured text contains, so a stray `@everyone` in the
+setting cannot ping the server.
 
-**Message edits and deletions are logged to one channel**, set by
-`LOG_CHANNEL_ID`. Leave it empty and nothing is logged at all. Each entry is an
-embed naming who did it, in which channel, with a jump link and — for an edit —
-the text on both sides of it. Logged content is wrapped in a code block, so
-someone else's markdown, mentions and links stay inert rather than rendering in
-your log. A deleted message's attachments are listed by filename only: Discord's
-CDN links stop resolving the moment the message is gone.
+**What the log records**
 
-Only these two events write there. The join greeting above goes to the server's
-system channel, and nothing else in the bot touches the log channel. Activity
-*inside* the log channel is itself never logged, so tidying the log cannot
-generate more log.
+| Event | Entry |
+|---|---|
+| Join | Member, account age, new member count |
+| Leave / kick / ban | Which of the three, who did it, why, roles they held |
+| Nickname, role, timeout change | Before → after, and which moderator |
+| Username change | Before → after (the account itself, not a nickname) |
+| Message edit | Text before and after, jump link |
+| Message delete | Content, attachments by name, who deleted it |
+| Bulk delete | Count, per-author tally, cached messages as a `.txt` attachment |
+| Everything else a moderator does | Rendered from the audit entry's own diff |
 
-The channel is resolved once and cached. If the id is missing, invisible, not a
-guild text channel, or the bot cannot post in it, logging switches itself off
-with one error in the console rather than failing on every subsequent event. The
-bot needs **Send Messages** there, and **View Audit Log** in the server to name
-who deleted what. Entries carry the server name in the footer, so one channel can
-watch several servers.
+**Two sources, deliberately not merged.** Discord describes most events twice:
+once as a gateway event carrying *what* happened, and once as an audit log entry
+carrying *who* did it. `on_audit_log_entry` is close to a superset of the
+moderation events, so listening to both naively double-logs nearly everything.
+Six actions — message delete, bulk delete, kick, ban, member update, member role
+update — are owned by dedicated handlers that say more than the audit entry
+could, and the generic renderer skips exactly those. Everything else, including
+Discord features that do not exist yet, renders generically from its own diff.
 
-Four things about this are worth knowing before you trust it:
+**Things it cannot see, by design of the platform:**
 
-- **It needs the privileged `message_content` intent.** The bot requests it in
-  code, but you must also tick *Message Content Intent* in the Developer Portal.
-  Unlike the members intent, Discord does not merely withhold the data here — it
-  **refuses the gateway connection outright**, so the bot will not start at all.
+- **Message edits are never audit-logged**, so an edit has no attributable actor.
 - **Only cached messages carry content.** The bot keeps the last 5000 messages
-  it has seen (Pycord's default is 1000; `MESSAGE_CACHE` in `bot.py` raises it,
-  at roughly a kilobyte each). Anything older, including everything from before
-  the last restart, arrives as a raw event instead and is logged in reduced
-  form: no before-text on an edit, and no content at all on a delete, because
-  Discord's delete payload is three ids and nothing else. That also means an
-  uncached delete cannot be filtered to humans — a deleted *bot* message looks
-  identical. **If you want more history covered, raise `MESSAGE_CACHE`**; it is
-  the single setting that decides how much the log can actually show.
-- **Who deleted a message is a guess, and often no guess at all.** It comes
-  from the audit log, which needs **View Audit Log** and is far patchier than
-  its name suggests. Discord's [own reference](https://docs.discord.com/developers/resources/audit-log)
-  describes the event as, in full, "Single message was deleted"; everything
-  below is observed behaviour rather than documented behaviour, so verify it
-  before relying on it:
-  - **Self-deletes are never recorded.** Someone deleting their own message
-    leaves no audit trace ([#1611](https://github.com/discord/discord-api-docs/issues/1611),
-    [#3215](https://github.com/discord/discord-api-docs/discussions/3215)).
-  - **Nor are deletes by a bot**, so another moderation bot removing a message
-    is equally invisible.
-  - **Entries target the author, not the message.** One moderator clearing
-    several messages from one person produces a single merged entry with a
-    rising `count`, keeping its original timestamp — so past ten seconds the
-    match fails and attribution degrades to "unrecorded", on exactly the case
-    most worth catching.
+  (`MESSAGE_CACHE` in `bot.py`; Pycord's default is 1000, at roughly a kilobyte
+  each). Older ones arrive as raw events and log in reduced form — no before-text
+  on an edit, no content at all on a delete. **This is the single setting that
+  decides how much the log can show.**
+- **Who deleted a message is a guess, and often no guess at all.** Discord's
+  [own reference](https://docs.discord.com/developers/resources/audit-log)
+  describes the event as, in full, "Single message was deleted"; everything below
+  is observed behaviour, so verify it before relying on it:
+  - **Self-deletes are never recorded** ([#1611](https://github.com/discord/discord-api-docs/issues/1611),
+    [#3215](https://github.com/discord/discord-api-docs/discussions/3215)) — the
+    deletions most worth catching are the ones that leave no trace. Only the
+    message cache catches those.
+  - **Nor are deletes by a bot**, so another moderation bot's cleanup is invisible.
+  - **Entries target the person, not the thing.** One moderator clearing several
+    messages from one person produces a single merged entry with a rising `count`,
+    keeping its original timestamp — so past ten seconds the match fails and
+    attribution degrades to "unrecorded".
+- **`on_audit_log_entry` only fires when the acting user is already cached.**
+  Otherwise only the raw form does, which this cog does not listen to.
+- **There is no rate limit.** One edit is one message in the log channel.
 
-  For a cached message the entry must also name that message's author, which
-  makes a match strong evidence. For an uncached one there is no author to
-  match against, so the log says "the audit log says X deleted Y's message"
-  rather than asserting it. "The author, or someone unrecorded" means exactly
-  that — never "nobody did it".
-- **A bulk delete is not logged at all.** Discord dispatches a purge as one
-  `bulk_message_delete` event rather than one delete per message, and this cog
-  does not listen to it — so `/delete`, and any moderator purge, passes
-  silently. Listening to `on_bulk_message_delete` would close that gap.
-- **There is no rate limit on the log.** One edit is one message in the channel.
-  A busy server with chatty editors makes for a busy log channel.
-
-An edit whose text did not change is ignored, because Discord fires the same
-event when a link unfurls into an embed or a message is pinned. Bot messages and
-DMs to the bot are never logged.
+Activity *inside* the log channel is never logged, so tidying the log cannot
+generate more log. An edit whose text did not change is ignored, because Discord
+fires the same event when a link unfurls or a message is pinned. Bot messages and
+DMs to the bot are never logged. The bot needs **Send Messages** in the log
+channel and **View Audit Log** in the server; entries carry the server name, so
+one channel can watch several.
 
 ## Storage: what goes where
 
@@ -500,6 +487,10 @@ few API calls and nothing else.
 | Data | Store | Why |
 |---|---|---|
 | Reminders | MariaDB | Must survive anything. |
+
+The database tests use a separate `<MYSQL_DB>_test` database. They drop their
+tables when they finish, so running them against `MYSQL_DB` would delete real
+reminders.
 | Member birthdays | MariaDB | Opt-in data and daily lookup must survive restarts. |
 | Pokémon set/card index | Redis, 26h | Rebuildable, but a cold start is 16 requests. |
 | Anime/manga search results | Redis, 15 min | Rebuildable; AniList rate-limits. |

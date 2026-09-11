@@ -6,6 +6,12 @@ import datetime as dt
 from discord_bot_v3.config import Config
 from discord_bot_v3.services.database import Database, DatabaseError
 
+# These tests create, fill and DROP tables, so they must never run against the
+# database the bot actually uses -- a suite run would wipe live reminders. The
+# bot creates a database on connect, so pointing at a "_test" sibling needs no
+# setup and leaves production data alone.
+TEST_DB_SUFFIX = "_test"
+
 # A feature's own DDL lives with the feature; this stands in for one.
 DEMO = """
 CREATE TABLE IF NOT EXISTS _schema_probe (
@@ -28,9 +34,10 @@ async def tables(db):
 async def main():
     cfg = Config.from_env().mysql
     assert cfg, "MYSQL_USER not set"
-    print(f"target: {cfg.user}@{cfg.host}:{cfg.port}/{cfg.name}")
+    name = cfg.name + TEST_DB_SUFFIX
+    print(f"target: {cfg.user}@{cfg.host}:{cfg.port}/{name}")
 
-    db = Database(host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password, name=cfg.name)
+    db = Database(host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password, name=name)
     try:
         await db.connect()
         v = await db.fetch_one("SELECT VERSION() v")

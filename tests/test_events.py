@@ -1,140 +1,159 @@
-"""Event-handler helpers: content quoting, raw-payload filtering, welcome text.
+"""Event-handler helpers: log formatting, raw-payload filtering, welcome text.
 
 Nothing here touches the gateway. What is checked is the logic that decides
-*whether* to log and *what* the embed says -- the parts that would otherwise
+*whether* to log and *what* the entry says -- the parts that would otherwise
 only be exercised by someone editing a message in a live guild.
 """
 
+import asyncio
 import types
 
-from discord_bot_v3.cogs.general import (
-    _NO_CONTENT,
-    General,
-    _delete_embed,
-    _edit_embed,
-    _format_welcome,
-    _is_loggable,
+import discord
+
+from discord_bot_v3.cogs.general import _format_welcome
+from discord_bot_v3.cogs.serverlog import (
+    _AUDIT_HANDLED,
+    _changes,
     _is_user_edit,
-    _quote,
-    _raw_delete_embed,
+    _listing,
+    _name,
+    _render,
 )
 from discord_bot_v3.config import DEFAULT_WELCOME_MESSAGE, _parse_welcome_message
+from discord_bot_v3.services.eventlog import NO_CONTENT, EventLog, clip, describe, quote, transcript
 
-# Discord's own limits, which the embeds must stay inside.
+# Discord's own limits, which every rendered value must stay inside.
 FIELD_LIMIT = 1024
-EMBED_LIMIT = 6000
 
 
-class FakeAuthor:
-    """A user stand-in. The embed footer formats it, so __str__ has to be real."""
-
-    def __init__(self, *, bot=False):
-        self.bot = bot
-        self.mention = "<@1>"
-        self.id = 1
-
-    def __str__(self):
-        return "someone#0001"
-
-
-def fake_message(content="hi", *, bot=False, guild=True, attachments=()):
-    """The smallest stand-in the helpers actually touch."""
-    return types.SimpleNamespace(
-        author=FakeAuthor(bot=bot),
-        content=content,
-        guild=types.SimpleNamespace(id=99, name="Guild") if guild else None,
-        channel=types.SimpleNamespace(mention="<#7>", id=7),
-        jump_url="https://discord.com/channels/99/7/5",
-        attachments=list(attachments),
-    )
+def fake_log(channel_id):
+    """An EventLog without a bot behind it; only the pure parts are exercised."""
+    return EventLog(types.SimpleNamespace(), channel_id)
 
 
 def main() -> None:
-    print("== what gets logged ==")
-    assert _is_loggable(fake_message())
-    assert not _is_loggable(fake_message(bot=True)), "bot messages must be ignored"
-    assert not _is_loggable(fake_message(guild=False)), "DMs must be ignored"
-    print("   human guild messages only; bots and DMs skipped")
-
     print("== raw payload filtering ==")
     # An embed unfurl and a pin both arrive as MESSAGE_UPDATE with no edited_timestamp.
     assert not _is_user_edit({"content": "x"}), "embed unfurl must not count as an edit"
     assert not _is_user_edit({"edited_timestamp": None}), "explicit null must not count"
-    assert not _is_user_edit(
-        {"edited_timestamp": "2026-01-01T00:00:00+00:00", "author": {"bot": True}}
-    )
-    assert _is_user_edit(
-        {"edited_timestamp": "2026-01-01T00:00:00+00:00", "author": {"bot": False}}
-    )
-    assert _is_user_edit({"edited_timestamp": "2026-01-01T00:00:00+00:00"}), (
-        "absent author is human"
-    )
+    stamp = "2026-01-01T00:00:00+00:00"
+    assert not _is_user_edit({"edited_timestamp": stamp, "author": {"bot": True}})
+    assert _is_user_edit({"edited_timestamp": stamp, "author": {"bot": False}})
+    assert _is_user_edit({"edited_timestamp": stamp}), "absent author is treated as human"
     print("   only a real, human edit passes; unfurls, pins and bots are dropped")
 
     print("== quoting message content ==")
-    assert _quote("") == _NO_CONTENT
-    assert _quote("   ") == _NO_CONTENT, "whitespace-only is as good as empty"
-    assert _quote("hello") == "```\nhello\n```"
+    assert quote("") == NO_CONTENT
+    assert quote("   ") == NO_CONTENT, "whitespace-only is as good as empty"
+    assert quote("hello") == "```\nhello\n```"
     # A nested fence would close the block early and let the rest render.
-    assert "```" not in _quote("a ``` b")[4:-4]
-    assert "​" in _quote("a ``` b")
-    long = _quote("x" * 5000)
+    assert "```" not in quote("a ``` b")[4:-4]
+    assert "​" in quote("a ``` b")
+    long = quote("x" * 5000)
     assert len(long) < FIELD_LIMIT, len(long)
     assert long.endswith("```") and "truncated" in long
     print(f"   empty handled, fences escaped, {len(long)} chars for a 5000-char message")
 
-    print("== embeds stay inside Discord's limits ==")
-    edit = _edit_embed(fake_message("a" * 5000), fake_message("b" * 5000))
-    assert len(edit) < EMBED_LIMIT, len(edit)
-    assert all(len(f.value) <= FIELD_LIMIT for f in edit.fields)
-    assert [f.name for f in edit.fields] == ["Before", "After"]
+    print("== every rendered value fits an embed field ==")
+    assert len(clip("y" * 5000, 1024)) <= 1024
+    assert clip("short", 1024) == "short"
+    assert len(_listing([f"item {i}" for i in range(500)])) <= FIELD_LIMIT
+    assert "and 490 more" in _listing([f"item {i}" for i in range(500)])
+    assert _name(None) == "*none*" and _name("") == "*none*"
+    # A name full of markdown must not restyle the entry it appears in.
+    assert "\\*" in _name("*bold*")
+    print("   listings collapse past 10; unset and markdown names are safe")
 
-    deleted = _delete_embed(
-        fake_message(
-            "gone", attachments=[types.SimpleNamespace(filename=f"f{i}.png") for i in range(25)]
-        ),
-        None,
+    print("== audit diffs ==")
+    entry = types.SimpleNamespace(
+        changes=types.SimpleNamespace(
+            before=[("name", "old"), ("nsfw", False), ("same", 1)],
+            after=[("name", "new"), ("nsfw", True), ("same", 1)],
+        )
     )
-    assert len(deleted) < EMBED_LIMIT, len(deleted)
-    names = {f.name for f in deleted.fields}
-    assert names == {"Content", "Attachments"}, names
-    attachments = next(f for f in deleted.fields if f.name == "Attachments")
-    assert len(attachments.value) <= FIELD_LIMIT
-    assert "and 15 more" in attachments.value, attachments.value
-    # No deleter means "author, or unrecorded" -- never a claim that nobody did it.
-    assert "author" in deleted.description
+    rendered = _changes(entry)
+    assert "name" in rendered and "old" in rendered and "new" in rendered
+    assert "no → yes" in rendered, rendered
+    assert "same" not in rendered, "unchanged fields must not be listed"
+    assert len(rendered) <= FIELD_LIMIT
+    assert _render(None) == "*none*"
+    assert _render([]) == "*none*"
+    print("   only changed fields render; booleans read as yes/no")
 
-    named = _delete_embed(fake_message("gone"), types.SimpleNamespace(mention="<@42>"))
-    assert "<@42>" in named.description
-    # One channel may watch several servers, so entries have to say which.
-    assert "Guild" in named.footer.text
-    print("   edit and delete embeds fit; attachments collapse past 10")
-
-    print("== uncached deletes report what the audit log knew ==")
-    payload = types.SimpleNamespace(guild_id=99, channel_id=7, message_id=5)
-    blind = _raw_delete_embed(payload, None, None)
-    assert "audit log did not record" in blind.description
-    assert "content is unknown" in blind.description
-
-    known = _raw_delete_embed(
-        payload, types.SimpleNamespace(mention="<@42>"), types.SimpleNamespace(mention="<@7>")
-    )
-    assert "<@42>" in known.description and "<@7>" in known.description
-    # A guess from the audit log must never be phrased as a certainty.
-    assert "audit log says" in known.description
-    print("   a recovered deleter is attributed to the audit log, not asserted")
+    print("== the six deduplicated audit actions ==")
+    # These have dedicated handlers; if one leaves this set it is logged twice.
+    names = {a.name for a in _AUDIT_HANDLED}
+    assert names == {
+        "message_delete",
+        "message_bulk_delete",
+        "kick",
+        "ban",
+        "member_update",
+        "member_role_update",
+    }, names
+    print("   generic renderer skips exactly what the dedicated handlers cover")
 
     print("== the log channel is not logged ==")
-    cog = General.__new__(General)
-    cog.bot = types.SimpleNamespace(config=types.SimpleNamespace(log_channel_id=555))
-    assert cog._is_log_channel(555), "clearing the log must not write more log"
-    assert not cog._is_log_channel(7)
-
-    off = General.__new__(General)
-    off.bot = types.SimpleNamespace(config=types.SimpleNamespace(log_channel_id=None))
+    log = fake_log(555)
+    assert log.is_log_channel(555), "clearing the log must not write more log"
+    assert not log.is_log_channel(7)
+    assert log.enabled
+    off = fake_log(None)
     # An unset id must not make every channel look like the log channel.
-    assert not off._is_log_channel(7)
+    assert not off.is_log_channel(7) and not off.is_log_channel(None)
+    assert not off.enabled, "no channel configured means logging is off"
     print("   events in the log channel are skipped; an unset id matches nothing")
+
+    print("== bulk delete transcript ==")
+    assert transcript([]) is None, "nothing cached means nothing to attach"
+    made = [
+        types.SimpleNamespace(
+            id=i,
+            content=f"line {i}",
+            created_at=__import__("datetime").datetime(2026, 1, 1),
+            author=types.SimpleNamespace(id=1, __str__=lambda s: "who"),
+            attachments=[],
+        )
+        for i in (3, 1, 2)
+    ]
+    file = transcript(made)
+    body = file.fp.read().decode()
+    assert body.index("line 1") < body.index("line 2") < body.index("line 3"), (
+        "must be chronological"
+    )
+    print("   cached messages attach as a chronological transcript")
+
+    print("== write() reaches Discord with valid arguments ==")
+    # Regression: `file=discord.MISSING` passed the type check here but was
+    # rejected by Messageable.send, so every entry without an attachment died
+    # with "file parameter must be File". Only a real send call catches it.
+    sent = []
+
+    class FakeChannel:
+        guild = object()
+
+        async def send(self, **kwargs):
+            # Mirror the one check in abc.Messageable.send that bit us.
+            if kwargs.get("file") is not None and not isinstance(kwargs["file"], discord.File):
+                raise discord.InvalidArgument("file parameter must be File")
+            sent.append(kwargs)
+
+    channel = FakeChannel()
+    log = EventLog(types.SimpleNamespace(get_channel=lambda _: channel), 555)
+    embed = discord.Embed(title="t")
+    asyncio.run(log.write(embed))
+    asyncio.run(log.write(embed, file=transcript(made)))
+
+    assert len(sent) == 2, sent
+    assert sent[0]["file"] is None, "no attachment must send file=None, not MISSING"
+    assert isinstance(sent[1]["file"], discord.File)
+    assert all(k["allowed_mentions"].everyone is False for k in sent), "entries must never ping"
+    print("   entries send with and without an attachment; nothing pings")
+
+    print("== identifying people ==")
+    assert describe(None) == "unknown"
+    assert "42" in describe(types.SimpleNamespace(id=42))
+    print("   footers carry the id, which outlives any rename")
 
     print("== welcome message ==")
     member = types.SimpleNamespace(mention="<@1>", guild=types.SimpleNamespace(name="Guild"))
