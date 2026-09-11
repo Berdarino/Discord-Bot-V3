@@ -58,6 +58,20 @@ def _parse_guild_ids(raw: str | None) -> list[int]:
         raise ConfigError(f"GUILD_IDS must be comma-separated integers, got {raw!r}") from exc
 
 
+def _parse_snowflake(raw: str | None, name: str) -> int | None:
+    """Parse one optional Discord id without accepting zero or negatives."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a Discord id, got {text!r}") from exc
+    if value <= 0:
+        raise ConfigError(f"{name} must be a positive Discord id, got {text!r}")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class MysqlConfig:
     """Connection settings for the bot's own MySQL database."""
@@ -88,6 +102,9 @@ class Config:
     mysql: MysqlConfig | None = None
     # Optional: caching only. Absent means every lookup goes to its API.
     redis_url: str | None = None
+    # Optional: channel where the daily birthday task posts. Birthdays can
+    # still be saved without it, but no public messages are sent.
+    birthday_channel_id: int | None = None
 
     @classmethod
     def from_env(cls) -> Config:
@@ -109,4 +126,7 @@ class Config:
             mal_client_id=os.getenv("MAL_CLIENT_ID", "").strip() or None,
             mysql=_parse_mysql(),
             redis_url=os.getenv("REDIS_URL", "").strip() or None,
+            birthday_channel_id=_parse_snowflake(
+                os.getenv("BIRTHDAY_CHANNEL_ID"), "BIRTHDAY_CHANNEL_ID"
+            ),
         )

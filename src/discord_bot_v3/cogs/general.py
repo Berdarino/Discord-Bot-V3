@@ -15,28 +15,10 @@ _log = logging.getLogger(__name__)
 
 
 class General(commands.Cog):
-    """Basic health-check and greeting commands."""
+    """General event listeners."""
 
     def __init__(self, bot: discord.Bot) -> None:
         self.bot = bot
-
-    @discord.slash_command(name="ping", description="Check whether the bot is responsive.")
-    async def ping(self, ctx: discord.ApplicationContext) -> None:
-        latency_ms = round(self.bot.latency * 1000)
-        await ctx.respond(f"Pong! `{latency_ms}ms`")
-
-    @discord.slash_command(name="hello", description="Greet a member.")
-    async def hello(
-        self,
-        ctx: discord.ApplicationContext,
-        member: discord.Option(
-            discord.Member,
-            description="Who to greet. Defaults to you.",
-            required=False,
-        ),
-    ) -> None:
-        target = member or ctx.author
-        await ctx.respond(f"Hello, {target.mention}!")
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:

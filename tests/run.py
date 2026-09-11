@@ -37,6 +37,7 @@ SUITE = [
     ("test_gif", set()),
     ("test_klipy", set()),
     ("test_media", set()),
+    ("test_members", set()),
     ("test_mal", {"network"}),
     ("test_tcg", {"network"}),
     ("test_tcg2", {"network"}),

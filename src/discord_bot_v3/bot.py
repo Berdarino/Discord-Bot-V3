@@ -43,6 +43,10 @@ class DiscordBot(discord.Bot):
         # Only request what we use; privileged intents must also be enabled
         # in the Discord Developer Portal before they will be granted.
         intents = discord.Intents.default()
+        # Members are recorded on join and synchronised at startup for the
+        # birthday feature. This also needs the Server Members Intent enabled
+        # in the Discord Developer Portal.
+        intents.members = True
 
         super().__init__(
             intents=intents,

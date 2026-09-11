@@ -99,7 +99,8 @@ src/discord_bot_v3/
 ├── config.py       environment parsing and validation
 ├── ui.py           reusable components (ConfirmView)
 ├── cogs/           one module per feature — auto-discovered at startup
-│   ├── general.py  /ping, /hello
+│   ├── general.py  general event listeners
+│   ├── members.py  /birthday, member sync, daily birthday task
 │   ├── gif.py      /gif — needs KLIPY_API_KEY
 │   ├── media.py    /anime, /manga
 │   ├── pokemon.py  /pokemon — TCG Pocket sets and cards
@@ -120,14 +121,14 @@ src/discord_bot_v3/
 
 | Command | Who | What |
 |---------|-----|------|
-| `/ping` | everyone | Report gateway latency. |
-| `/hello` | everyone | Greet a member. |
 | `/gif` | everyone | Preview a GIF from KLIPY privately, shuffle, then post it. |
 | `/anime` | everyone | Search anime, with title autocomplete. AniList, falling back to MyAnimeList. |
 | `/manga` | everyone | Search manga, with title autocomplete. AniList, falling back to MyAnimeList. |
 | `/pokemon sets list / get` | everyone | Browse Pokémon TCG Pocket sets. |
 | `/pokemon cards …` | everyone | `list`, `search`, `get`, `random`, `id` over TCG Pocket cards. |
 | `/pokemon update` | everyone | Refresh the cached TCGdex data (5 min cooldown). |
+| `/birthday set` | everyone | Save your birthday privately for this server. |
+| `/birthday remove` | everyone | Remove your saved birthday from this server. |
 | **Remind me in…** | everyone | Right-click a message → Apps. Reminder after an offset. |
 | **Remind me at…** | everyone | Right-click a message → Apps. Reminder at a wall-clock time. |
 | `/reminders` | everyone | List your pending reminders and cancel them. |
@@ -384,17 +385,37 @@ Delivery replies to the confirmation message when it still exists, so the
 reminder lands in context. A reminder that cannot be delivered is dropped rather
 than retried forever on every tick.
 
+### Birthdays
+
+`/birthday set` saves your own date of birth privately, per server; `/birthday
+remove` deletes it. The bot records member names when it starts and when someone
+joins, but it never imports birthdays from Discord because Discord does not
+provide them. A birthday is stored as a real date, while announcements use only
+its month and day, never revealing a person's age or birth year.
+
+Set `BIRTHDAY_CHANNEL_ID` to the channel where announcements should appear. At
+midnight in `TIMEZONE`, the bot posts one greeting for each birthday belonging
+to that channel's server. Without the setting, birthdays can still be saved but
+no announcement is posted. Each greeting includes the [birthday chicken GIF](https://klipy.com/gifs/happy-birthday-chicken)
+from KLIPY; no media asset is stored in the repository. February 29 birthdays
+are celebrated on February 28 in non-leap years.
+
+The feature needs the **Server Members Intent** enabled under the bot's
+*Privileged Gateway Intents* in the Discord Developer Portal. The bot requests
+it in code; Discord will withhold member events unless it is also enabled there.
+
 ## Storage: what goes where
 
 Two stores, with a clear split.
 
-**MariaDB holds anything the bot would be sad to lose** — reminders today,
-members and quotes later. **Redis holds only derived data**; losing it costs a
+**MariaDB holds anything the bot would be sad to lose** — reminders and member
+birthdays today, quotes later. **Redis holds only derived data**; losing it costs a
 few API calls and nothing else.
 
 | Data | Store | Why |
 |---|---|---|
 | Reminders | MariaDB | Must survive anything. |
+| Member birthdays | MariaDB | Opt-in data and daily lookup must survive restarts. |
 | Pokémon set/card index | Redis, 26h | Rebuildable, but a cold start is 16 requests. |
 | Anime/manga search results | Redis, 15 min | Rebuildable; AniList rate-limits. |
 | Paginators, pickers, confirmations | memory | Meaningless after a restart. |
