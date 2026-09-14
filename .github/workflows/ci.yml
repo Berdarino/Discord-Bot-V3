@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A second push to the same branch makes the first run pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # uv reads .python-version and fetches 3.14 itself, so there is no
+      # setup-python step. --locked fails on a stale uv.lock rather than
+      # quietly resolving something other than what runs locally.
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      # Offline only: no network, Redis or MariaDB. The live tests stay out of
+      # CI on purpose -- they probe real APIs, so a failure there often means
+      # "the API moved", and a build that goes red for that trains you to stop
+      # reading it.
+      - name: Tests
+        run: uv run python tests/run.py --offline
