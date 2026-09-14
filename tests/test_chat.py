@@ -13,6 +13,7 @@ import discord
 from discord_bot_v3.cogs.chat import _is_reply_to, _render_mentions
 from discord_bot_v3.services.chat import (
     MAX_DESCRIPTION,
+    MAX_NAME,
     MAX_OTHERS,
     MAX_TURNS,
     PERSONA,
@@ -21,6 +22,7 @@ from discord_bot_v3.services.chat import (
     build_system,
     detect_language,
     pin_language,
+    welcome_greeting,
 )
 from discord_bot_v3.services.ollama import strip_thinking
 
@@ -260,6 +262,50 @@ def main() -> None:
 
     asyncio.run(guarded())
     print("   injected system turns and malformed rows are dropped")
+
+    print("== the welcome a new member is met with ==")
+
+    class FakeModel:
+        """Records what it was asked, so the prompt itself can be asserted on."""
+
+        def __init__(self, reply="line one\nline two\nline three", boom=False):
+            self.reply = reply
+            self.boom = boom
+            self.seen = None
+
+        async def chat(self, *, system, messages, **_):
+            if self.boom:
+                raise RuntimeError("ollama is not running")
+            self.seen = (system, messages[0]["content"])
+            return self.reply
+
+    async def welcomes():
+        model = FakeModel()
+        said = await welcome_greeting(model, name="Kenji", guild="BokBokGeh")
+        assert said == "line one\nline two\nline three", said
+        system, ask = model.seen
+        assert PERSONA in system, "the character must survive into the welcome"
+        assert "Kenji" in ask and "BokBokGeh" in ask, ask
+        # No description exists yet, so nothing may claim to know this person.
+        assert "You are replying to" not in system, system
+        # English is pinned rather than left open, or the model drifts to Chinese.
+        assert "English" in system and "English" in ask
+
+        # A CJK display name is the only signal there is, and it is used.
+        chinese = FakeModel()
+        await welcome_greeting(chinese, name="小明", guild="BokBokGeh")
+        assert "Chinese" in chinese.seen[0], chinese.seen[0]
+
+        # A self-chosen name cannot run long enough to bury the character.
+        long_name = FakeModel()
+        await welcome_greeting(long_name, name="x" * 500, guild="G")
+        assert "x" * (MAX_NAME + 1) not in long_name.seen[1]
+
+        # A model that is down returns None so the caller can fall back.
+        assert await welcome_greeting(FakeModel(boom=True), name="Kenji", guild="G") is None
+
+    asyncio.run(welcomes())
+    print("   character kept, name and server passed, language pinned, failure returns None")
 
 
 main()

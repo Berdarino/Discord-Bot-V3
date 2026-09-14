@@ -651,12 +651,28 @@ database and no log channel, because a greeting should not depend on either.
 Everything else goes to [`serverlog.py`](src/discord_bot_v3/cogs/serverlog.py),
 which writes to `LOG_CHANNEL_ID` — set it, or that cog does not load at all.
 
-The welcome text comes from `WELCOME_MESSAGE`, defaulting to V2's
+**The bot writes the welcome itself** when Ollama is reachable, the same way
+it writes birthday greetings. A first impression is worth a generation, and the
+character is the point of the server. It has less to work with than a birthday:
+a new member has no `description` row and has never spoken, so the name and the
+server are the whole prompt. The mention goes on its own line above whatever the
+model wrote, since the character answers in three short lines.
+
+`WELCOME_MESSAGE` is the fallback when the model is down or unset — nobody is
+met with silence because Ollama had unloaded. It defaults to V2's
 `Who simply add people in again... smh`; `{member}` becomes a mention and
-`{guild}` the server name. Setting it blank turns the greeting off, and a server
-with no system channel silently gets none. Only the joining member can be
-mentioned, whatever the configured text contains, so a stray `@everyone` in the
-setting cannot ping the server.
+`{guild}` the server name. Setting it blank turns the greeting off **entirely**,
+model included: with nothing to fall back to, a model that was merely slow would
+otherwise get to decide what the setting meant. A server with no system channel
+silently gets none.
+
+A joining member picks their own display name, so it is the one string in that
+prompt nobody in the server chose. It is length-capped, and the character is
+held to three short lines, which is what keeps a stray instruction inside a
+name from becoming a paragraph. Only the joining member can be mentioned —
+whatever the setting contains and whatever the model writes — so neither a
+stray `@everyone` in the template nor one in a generated line can ping the
+server.
 
 **What the log records**
 

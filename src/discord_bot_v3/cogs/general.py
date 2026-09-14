@@ -3,7 +3,9 @@
 The counterpart to ``serverlog.py``, which writes to the log channel for your
 eyes. This posts one public greeting and nothing else, which is why it survives
 on a bot with no ``LOG_CHANNEL_ID`` and no database: a welcome should not
-depend on either.
+depend on either. The character writes the greeting when Ollama is reachable
+and ``WELCOME_MESSAGE`` is posted when it is not, so that stays true of the
+model too.
 
 Three cogs listen to ``on_member_join`` and the split is deliberate — this one
 greets, ``serverlog.py`` records it for you, and ``members.py`` writes the
@@ -20,6 +22,8 @@ import logging
 import discord
 from discord.ext import commands
 
+from ..services.chat import welcome_greeting
+
 _log = logging.getLogger(__name__)
 
 
@@ -31,12 +35,19 @@ class General(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:
-        """Post the configured greeting, if there is a channel to post it in."""
+        """Post a greeting, if there is a channel to post it in."""
         _log.info("%s joined %s", member, member.guild)
 
-        greeting = _format_welcome(self.bot.config.welcome_message, member)
         channel = member.guild.system_channel
-        if not greeting or channel is None:
+        template = self.bot.config.welcome_message
+        # A blank WELCOME_MESSAGE switches the greeting off entirely, model
+        # included: with nothing to fall back to, a model that is merely slow
+        # would decide whether a setting meant "off".
+        if not template or channel is None:
+            return
+
+        greeting = await self._greeting(member, template)
+        if not greeting:
             return
 
         try:
@@ -52,6 +63,26 @@ class General(commands.Cog):
             _log.warning("Cannot post the welcome in #%s (%s)", channel, member.guild)
         except discord.HTTPException:
             _log.exception("Could not welcome %s to %s", member.id, member.guild)
+
+    async def _greeting(self, member: discord.Member, template: str) -> str:
+        """The bot's own words if it can manage them, the configured line if not.
+
+        A first impression is worth a generation, and the character is the
+        whole point of the server. But nobody should be met with silence
+        because a local model was unloaded, so this falls back rather than
+        failing -- the same bargain the birthday greeting strikes.
+
+        The mention goes on its own line above whatever the model wrote: the
+        character answers in three short lines, and a name glued to the front
+        of the first one reads as a fourth.
+        """
+        if self.bot.ollama is not None:
+            spoken = await welcome_greeting(
+                self.bot.ollama, name=member.display_name, guild=member.guild.name
+            )
+            if spoken:
+                return f"{member.mention}\n{spoken}"
+        return _format_welcome(template, member)
 
 
 def _format_welcome(template: str, member: discord.Member) -> str:

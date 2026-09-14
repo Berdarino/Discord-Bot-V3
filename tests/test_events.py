@@ -10,7 +10,7 @@ import types
 
 import discord
 
-from discord_bot_v3.cogs.general import _format_welcome
+from discord_bot_v3.cogs.general import General, _format_welcome
 from discord_bot_v3.cogs.serverlog import (
     _AUDIT_HANDLED,
     _changes,
@@ -164,6 +164,36 @@ def main() -> None:
     assert _format_welcome("100% {sure}", member) == "100% {sure}"
     assert _format_welcome("a { b", member) == "a { b"
     print("   placeholders filled; a malformed template posts verbatim")
+
+    print("== who writes the welcome ==")
+    joiner = types.SimpleNamespace(
+        mention="<@1>", display_name="Kenji", guild=types.SimpleNamespace(name="Guild")
+    )
+
+    def cog(ollama):
+        return General(types.SimpleNamespace(ollama=ollama, config=None))
+
+    class Model:
+        def __init__(self, reply=None, boom=False):
+            self.reply, self.boom = reply, boom
+
+        async def chat(self, **_):
+            if self.boom:
+                raise RuntimeError("down")
+            return self.reply
+
+    async def greetings():
+        # No Ollama configured at all: exactly the old behaviour.
+        assert await cog(None)._greeting(joiner, "hi {member}") == "hi <@1>"
+        # Model answers: its words, with the mention on its own line above.
+        spoken = await cog(Model("one\ntwo\nthree"))._greeting(joiner, "hi {member}")
+        assert spoken == "<@1>\none\ntwo\nthree", spoken
+        # Model unreachable or silent: the configured line, never nothing.
+        assert await cog(Model(boom=True))._greeting(joiner, "hi {member}") == "hi <@1>"
+        assert await cog(Model(""))._greeting(joiner, "hi {member}") == "hi <@1>"
+
+    asyncio.run(greetings())
+    print("   the character writes it when it can; WELCOME_MESSAGE when it cannot")
 
     print("== welcome configuration ==")
     assert _parse_welcome_message(None) == DEFAULT_WELCOME_MESSAGE, "unset keeps V2's greeting"

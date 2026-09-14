@@ -61,6 +61,11 @@ MAX_REPLY = 2000
 # attention -- a couple of sentences is the intended shape.
 MAX_DESCRIPTION = 500
 
+# A joining member picks their own display name, so it is the only text in a
+# welcome prompt that the server owner did not write. Discord caps names at 32
+# characters; the headroom here is for its future self, not for an essay.
+MAX_NAME = 80
+
 # How many other people one message can drag into the prompt. A message that
 # tags half the server should not bury the character under a cast list.
 MAX_OTHERS = 4
@@ -105,6 +110,49 @@ async def birthday_greeting(client: Any, *, name: str, description: str | None) 
     except Exception:
         _log.exception("Could not generate a birthday greeting for %s", name)
         return None
+
+
+async def welcome_greeting(client: Any, *, name: str, guild: str) -> str | None:
+    """Ask the model to greet someone who has just joined, in character.
+
+    Returns None on any failure, because a welcome must still be posted when
+    the model is unreachable -- the caller falls back to ``WELCOME_MESSAGE``.
+
+    Unlike a birthday there is nothing to say about this person yet: they have
+    no ``members.description`` row and have never spoken here. The name and the
+    server are the whole input, which is also why the name is clipped. It is
+    the one string in this prompt chosen by someone the server has not yet
+    decided to trust, and the three-line shape the character is held to is what
+    keeps a stray instruction inside it from turning into a paragraph.
+
+    The language is pinned for the same reason it is on a birthday: this is a
+    public post and an unpinned model drifts to Chinese. A display name is a
+    far weaker signal than a written description -- two words, often romanised
+    -- so it decides nothing on its own and English carries the default.
+    """
+    language = detect_language(name) or "English"
+    system = build_system(None, (), language)
+    ask = pin_language(
+        f"{_clip_name(name)} just walked into {guild} for the first time. "
+        f"Say something to them about it.",
+        language,
+    )
+
+    try:
+        return await client.chat(
+            system=system,
+            messages=[{"role": "user", "content": ask}],
+            max_tokens=MAX_TOKENS,
+            temperature=TEMPERATURE,
+        )
+    except Exception:
+        _log.exception("Could not generate a welcome for %s", name)
+        return None
+
+
+def _clip_name(name: str) -> str:
+    """Trim a self-chosen display name to something that cannot run long."""
+    return name.strip()[:MAX_NAME]
 
 
 def _clip(description: str) -> str:

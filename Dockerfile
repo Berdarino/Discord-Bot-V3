@@ -18,7 +18,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project --no-dev --no-editable
 
-COPY pyproject.toml uv.lock README.md ./
+# README.md and LICENSE are build inputs, not documentation: pyproject names
+# them in `readme` and `license-files`, and the build fails without them.
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
 
 # --no-editable bakes the package into the venv, so the runtime image needs
