@@ -14,8 +14,8 @@ uv sync                              # install, including dev deps
 cp .env.example .env                 # then fill it in -- see below
 uv run python -m discord_bot_v3      # run the bot
 
-uv run python tests/run.py           # all 20 tests
-uv run python tests/run.py --offline # the 8 needing no services
+uv run python tests/run.py           # all 21 tests
+uv run python tests/run.py --offline # the 9 needing no services
 uv run python tests/run.py test_media  # one test, full output
 
 # The mariadb tests use <MYSQL_DB>_test, not MYSQL_DB. Never point them at live data.
@@ -52,6 +52,12 @@ happen. `Database.connect` creates a database that does not exist, so the
 `_test` sibling needs no setup. Any new test that touches MySQL must use
 `TEST_DB_SUFFIX` too.
 
+**Qwen3 emits `<think>` blocks and `think: false` does not always stop it.**
+Reported broken across several Qwen3 builds, so `services/ollama.py` strips the
+tags as well — closed, orphaned (a reply truncated by `num_predict` keeps the
+closing tag only) and unclosed. Remove the stripper and the bot posts its own
+reasoning to the channel as its reply.
+
 **Pycord is not discord.py.** `setup()` and `add_cog()` are *synchronous*.
 There is no `setup_hook`. `on_ready` fires again on every reconnect, so
 one-time startup work belongs in `Bot.start`, not there.
@@ -72,13 +78,67 @@ selects accumulate and the *second* page flip raises; `CardPaginator` in
 
 ## Deliberate decisions — do not "fix" these
 
-**AniList returns HTTP 403 to this client** ("temporarily disabled due to
-severe stability issues"). The block lifts if you send
-`Referer: https://anilist.co`. We deliberately do **not**, because it would
-misrepresent the bot as AniList's own website to bypass an access control the
-operator put there on purpose. MyAnimeList is the fallback and in practice
-answers everything today. Adding that header is the single most likely
-"helpful" regression here.
+**AniList is answering again (checked 2026-09-14).** It spent a long stretch
+returning HTTP 403 ("temporarily disabled due to severe stability issues"); it
+no longer does, and it is the primary provider again. If it 403s once more, the
+block lifts by sending `Referer: https://anilist.co` — we deliberately do
+**not**, because it would misrepresent the bot as AniList's own website to
+bypass an access control the operator put there on purpose. Adding that header
+is the single most likely "helpful" regression here.
+
+**AniList's title matching breaks on partial words, so an empty result falls
+through to MyAnimeList.** `naru` and `naruto` each return ten; `narut` returns
+nothing. `frier` returns nothing while MAL returns five. Autocomplete types one
+character at a time and lands on those gaps constantly, which silently emptied
+it when AniList came back. `_fetch` therefore treats an empty AniList answer to
+a *title search* as "ask MAL", while an empty **browse** (no search term) is
+taken at face value. Do not "simplify" that back into a single return.
+
+**Chat runs on a local model, deliberately.** V2 used Gemini via LangChain.
+V3 uses Ollama over plain aiohttp — no SDK, no new dependency, no API key, and
+nothing said in the server leaves the machine. That last point is the reason:
+the alternative free tier trains on what you send it and says so in its terms,
+and these are real people's private messages. The cost is quality — an 8B model
+is weaker at the persona's Sarawak Chinese than a hosted model would be.
+
+**The character is `PERSONA` in `services/chat.py`, not a setting.** It is
+prose the model is shown verbatim, so do not reflow it to 100 columns and do not
+let ruff normalise fullwidth punctuation in it — there are per-file `E501` and
+`RUF001` ignores for exactly that. Per-person handling comes from
+`members.description`, appended by `build_system`.
+
+**Two columns are curated by hand: `members.birthday` and
+`members.description`.** No command sets either, deliberately — a row edit beats
+a command plus validation for one small server, and it keeps both to whoever has
+database access. Do not "helpfully" add `/birthday set` back.
+
+**`CREATE TABLE IF NOT EXISTS` will not add a column to a table that already
+exists.** A feature that grows a column must also call
+`Database.ensure_column`, or every database created before the change silently
+keeps the old shape. `MemberStore.ADDED_COLUMNS` is the worked example. The
+check goes through `information_schema` because `ADD COLUMN IF NOT EXISTS` is
+MariaDB-only.
+
+**Replayed history beats the system prompt, so language is enforced twice.**
+Measured on qwen3:8b: asked in English with no history it answers in Chinese
+3/3; a "reply in English" line last in the system prompt fixes it 0/3; replay a
+Chinese history and the same line loses 3/3. Code-switched input is worse still: one
+Chinese word in an English sentence leaks 4/10 with the system pin alone, and
+1/10 once the same instruction is repeated on the user turn (`pin_language`).
+
+`detect_language` is therefore applied three ways — the system prompt, the user
+turn, and filtering the replayed history — and all three are load-bearing.
+Dropping any one brings the bug back. Telling the model to *mirror* a mix was
+measured and is worse than forcing one language: full Chinese every time, with
+degenerate repetition. Re-measure rather than reasoning about it if the model
+changes.
+
+`pin_language` applies to the request only; `remember` stores the clean
+message, or the reminder accumulates through the history.
+
+**A local model serves one generation at a time.** `cogs/chat.py` holds a lock
+across the whole call. Removing it does not make replies arrive sooner; it makes
+all of them arrive late.
 
 **The bot owner is whoever owns the application in the Discord Developer
 Portal.** There is no `OWNER_ID` env var and there should not be one.
@@ -150,8 +210,9 @@ upside.
 
 ## State of play
 
-15 commands across 8 cogs: `General`, `Gifs`, `MediaSearch`, `Members`,
-`Owner`, `Pokemon`, `Reminders`, `ServerLog`. All 20 tests pass; ruff is clean.
+14 commands across 9 cogs: `Chat`, `General`, `Gifs`, `MediaSearch`,
+`Members`, `Owner`, `Pokemon`, `Reminders`, `ServerLog`. All 21 tests pass;
+ruff is clean.
 
 Neither `General` nor `ServerLog` owns a command. They are split by audience:
 `General` posts the public welcome to the guild's system channel, `ServerLog`
@@ -167,12 +228,15 @@ That makes the table not a guest list, and the announcer therefore checks
 The bot has been run against a real gateway and exercised by hand on a test
 server; the suite itself still drives objects directly or hits third-party APIs
 rather than connecting. Ported from V2 so far are `/send`, `/delete`, `/gif`, `/anime`, `/manga`, `/pokemon`,
-reminders, members/birthdays and the event handlers. Still to port: **LLM chat
-(Gemini)**. Quotes are not a separate feature — V2 has no quote command, and
-`QUOTE_TABLE` exists only to feed example phrasings into the AI's role message,
-so it lands with the chat port or not at all.
+reminders, members/birthdays, the event handlers and LLM chat. **Every V2
+feature is now ported.**
 
-One known gap: `AniListClient.details()` has never run against the live API,
-because AniList has been 403 throughout. Its parser is unit-tested and every
-lookup tolerates a missing branch, so a shape surprise degrades to an empty
-section rather than an exception — but it is unverified.
+What is left of the chat port is the *per-member* half: V2's `role_message`
+column and `QUOTE_TABLE` let each person customise the bot's voice toward them.
+`build_system()` already accepts both; nothing writes them. V2 had no command to
+manage them either, so porting that usefully means designing one.
+
+`AniListClient.details()` was unverified for a long time because of the 403.
+It has now been run against the live API (2026-09-14) and all five fields it
+parses come back populated: relations, recommendations, links, stats and staff.
+That gap is closed.

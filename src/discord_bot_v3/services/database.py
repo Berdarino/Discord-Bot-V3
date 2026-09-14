@@ -155,6 +155,37 @@ class Database:
                 for statement in statements:
                     await cur.execute(statement)
 
+    async def ensure_column(self, table: str, column: str, definition: str) -> bool:
+        """Add a column to an existing table, if it is not already there.
+
+        ``CREATE TABLE IF NOT EXISTS`` does nothing to a table that already
+        exists, so a feature that grows a new column cannot ship it in its
+        ``SCHEMA`` alone — every database created before the change would
+        silently keep the old shape. This is the escape hatch for that, and the
+        closest thing here to a migration.
+
+        The existence check goes through ``information_schema`` rather than
+        ``ADD COLUMN IF NOT EXISTS``, which MariaDB accepts and MySQL 8 does
+        not. Returns whether the column had to be added.
+
+        ``table``, ``column`` and ``definition`` are interpolated into DDL and
+        must be literals from the source, never anything a user supplied.
+        """
+        existing = await self.fetch_one(
+            "SELECT 1 AS present FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() AND table_name = %s AND column_name = %s",
+            table,
+            column,
+        )
+        if existing:
+            return False
+
+        async with self._cursor() as cur:
+            with _quiet_already_exists():
+                await cur.execute(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}")
+        _log.info("Added column %s.%s", table, column)
+        return True
+
     async def close(self) -> None:
         """Close the pool. Safe to call more than once."""
         if self._pool is not None and not self._pool.closed:

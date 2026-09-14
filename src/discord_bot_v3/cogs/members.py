@@ -1,7 +1,14 @@
-"""Member records, self-service birthdays, and the daily announcer.
+"""Member records and the daily birthday announcer.
 
-This cog deliberately does not use ``from __future__ import annotations``:
-Pycord reads ``discord.Option`` objects from command signatures at runtime.
+This cog owns **no commands**. It keeps the ``members`` table in step with the
+server — a row per person, synchronised at startup and on join — and posts
+birthdays at midnight.
+
+Both of the columns a human curates, ``birthday`` and ``description``, are set
+by hand in SQL. There is deliberately no ``/birthday set``: for one small
+server, a row edit is less work than a command, an autocomplete and a
+validation path. The cost is that only someone with database access can change
+them, which for these two is the point.
 """
 
 import datetime as dt
@@ -14,7 +21,6 @@ from discord.ext import commands, tasks
 from ..services.members import BirthdayMember, MemberStore
 
 _log = logging.getLogger(__name__)
-_EARLIEST_BIRTHDAY = dt.date(1900, 1, 1)
 # Keep this as KLIPY's share URL rather than copying an asset into the repo.
 # Discord unfurls the page's animated media in the birthday channel.
 _BIRTHDAY_GIF_URL = "https://klipy.com/gifs/happy-birthday-chicken"
@@ -22,8 +28,6 @@ _BIRTHDAY_GIF_URL = "https://klipy.com/gifs/happy-birthday-chicken"
 
 class Members(commands.Cog):
     """Keep a per-guild member directory and announce opted-in birthdays."""
-
-    birthday = discord.SlashCommandGroup("birthday", "Manage your birthday.")
 
     def __init__(self, bot: discord.Bot, store: MemberStore) -> None:
         self.bot = bot
@@ -112,68 +116,6 @@ class Members(commands.Cog):
             username=member.name,
             display_name=member.display_name,
         )
-
-    @birthday.command(name="set", description="Save your birthday for this server.")
-    async def birthday_set(
-        self,
-        ctx: discord.ApplicationContext,
-        date: discord.Option(str, description="YYYY-MM-DD", min_length=10, max_length=10),
-    ) -> None:
-        """Save the invoking member's date of birth privately."""
-        birthday = _parse_birthday(date)
-        if birthday is None:
-            await ctx.respond("Use a real past date in `YYYY-MM-DD` format.", ephemeral=True)
-            return
-        if not self._ready or ctx.guild is None:
-            await ctx.respond("Birthdays are only available in a server right now.", ephemeral=True)
-            return
-
-        await ctx.defer(ephemeral=True)
-        try:
-            await self._upsert_member(ctx.author)
-            await self.store.set_birthday(
-                guild_id=ctx.guild.id, user_id=ctx.author.id, birthday=birthday
-            )
-        except Exception:
-            _log.exception("Could not save birthday for %s", ctx.author.id)
-            await ctx.respond("I could not save your birthday.", ephemeral=True)
-            return
-
-        await ctx.respond(
-            f"Saved your birthday as **{birthday.strftime('%B')} {birthday.day}**. "
-            "Only the day and month are used for announcements.",
-            ephemeral=True,
-        )
-
-    @birthday.command(name="remove", description="Remove your saved birthday from this server.")
-    async def birthday_remove(self, ctx: discord.ApplicationContext) -> None:
-        """Let a member revoke their birthday without needing an administrator."""
-        if not self._ready or ctx.guild is None:
-            await ctx.respond("Birthdays are only available in a server right now.", ephemeral=True)
-            return
-
-        await ctx.defer(ephemeral=True)
-        try:
-            removed = await self.store.clear_birthday(guild_id=ctx.guild.id, user_id=ctx.author.id)
-        except Exception:
-            _log.exception("Could not remove birthday for %s", ctx.author.id)
-            await ctx.respond("I could not remove your birthday.", ephemeral=True)
-            return
-        await ctx.respond(
-            "Your birthday has been removed." if removed else "You do not have a birthday saved.",
-            ephemeral=True,
-        )
-
-
-def _parse_birthday(raw: str) -> dt.date | None:
-    """Accept an ISO date that is plausible and in the past."""
-    try:
-        birthday = dt.date.fromisoformat(raw.strip())
-    except ValueError:
-        return None
-    if not _EARLIEST_BIRTHDAY <= birthday < dt.date.today():
-        return None
-    return birthday
 
 
 def _birthday_keys(today: dt.date) -> tuple[str, ...]:

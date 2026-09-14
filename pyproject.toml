@@ -62,11 +62,20 @@ select = [
 # declares options.
 "src/discord_bot_v3/cogs/*.py" = ["B008"]
 
+# The persona and its example quotes are real Chinese text. Fullwidth
+# punctuation (？ ，) is correct there, not a lookalike typo, and "fixing" it
+# would change what the model is shown.
+# PERSONA is prose the model is shown verbatim. Reflowing it to 100 columns
+# would put newlines in the middle of sentences the model reads, so long
+# lines are allowed here.
+"src/discord_bot_v3/services/chat.py" = ["RUF001", "RUF002", "E501"]
+
 # The suite is a set of standalone scripts that print what they check, not a
 # library. Long diagnostic lines and %-formatted prints are the point there,
 # and `list(x)[0]` reads more plainly than `next(iter(x))` in an assertion.
 "tests/*.py" = [
     "E501",   # long print/diagnostic lines
+    "RUF001", # CJK text and fullwidth punctuation are the fixtures, not typos
     "UP031",  # %-format in prints
     "RUF015", # list(...)[0] over next(iter(...))
     "C408",   # dict(...) builders in test fixtures

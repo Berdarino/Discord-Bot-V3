@@ -18,6 +18,10 @@ class ConfigError(RuntimeError):
 # an empty WELCOME_MESSAGE turns greetings off entirely.
 DEFAULT_WELCOME_MESSAGE = "Who simply add people in again... smh"
 
+# The local model the chat feature talks to. 8B at Q4 is about 5GB resident,
+# which is the practical floor for holding a character over several turns.
+DEFAULT_OLLAMA_MODEL = "qwen3:8b"
+
 
 def _parse_timezone(raw: str | None) -> str:
     """Validate the configured zone now, rather than when a reminder is set."""
@@ -125,6 +129,14 @@ class Config:
     # Optional: channel that message edits and deletions are logged to.
     # Unset means the listeners resolve nothing and post nothing.
     log_channel_id: int | None = None
+    # Optional: base URL of a local Ollama server. Unset disables chat
+    # entirely -- the cog does not load and the bot never answers.
+    ollama_url: str | None = None
+    # Which model that server should answer with.
+    ollama_model: str = DEFAULT_OLLAMA_MODEL
+    # Optional: channel where mentioning the bot starts a conversation.
+    # Replying to the bot works anywhere, with or without this.
+    chat_channel_id: int | None = None
     # Posted to a guild's system channel when someone joins. ``{member}``
     # becomes a mention and ``{guild}`` the server name. Empty posts nothing.
     welcome_message: str = DEFAULT_WELCOME_MESSAGE
@@ -153,5 +165,8 @@ class Config:
                 os.getenv("BIRTHDAY_CHANNEL_ID"), "BIRTHDAY_CHANNEL_ID"
             ),
             log_channel_id=_parse_snowflake(os.getenv("LOG_CHANNEL_ID"), "LOG_CHANNEL_ID"),
+            ollama_url=os.getenv("OLLAMA_URL", "").strip() or None,
+            ollama_model=os.getenv("OLLAMA_MODEL", "").strip() or DEFAULT_OLLAMA_MODEL,
+            chat_channel_id=_parse_snowflake(os.getenv("CHAT_CHANNEL_ID"), "CHAT_CHANNEL_ID"),
             welcome_message=_parse_welcome_message(os.getenv("WELCOME_MESSAGE")),
         )

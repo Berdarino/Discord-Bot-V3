@@ -1,7 +1,11 @@
 """Durable member records and birthdays.
 
-Birthdays are stored as real dates so a member can correct their full date of
-birth later. A deterministic generated ``MM-DD`` column makes the daily lookup
+Birthdays are stored as real dates rather than a bare month and day, so the
+stored value stays correct if it ever needs amending. They are set by hand in
+SQL — there is no command for it — and so is ``description``, the line telling
+the chat persona who this member is and how to treat them.
+
+A deterministic generated ``MM-DD`` column makes the daily birthday lookup
 indexed without relying on MariaDB's server timezone or locale.
 """
 
@@ -35,6 +39,7 @@ class MemberStore:
             username      VARCHAR(100)    NOT NULL,
             display_name  VARCHAR(100)    NOT NULL,
             birthday      DATE            NULL,
+            description   TEXT            NULL,
             birthday_mmdd CHAR(5) GENERATED ALWAYS AS (
                 CASE WHEN birthday IS NULL THEN NULL
                 ELSE CONCAT(LPAD(MONTH(birthday), 2, '0'), '-', LPAD(DAY(birthday), 2, '0'))
@@ -48,12 +53,18 @@ class MemberStore:
         """,
     )
 
+    # Added after the table shipped, so it needs adding to databases that
+    # already have one. See `Database.ensure_column`.
+    ADDED_COLUMNS = (("description", "TEXT NULL"),)
+
     def __init__(self, db: Database) -> None:
         self._db = db
 
     async def setup(self) -> None:
-        """Create the feature's table when the cog first becomes ready."""
+        """Create the feature's table, and catch up an older one."""
         await self._db.ensure_schema(*self.SCHEMA)
+        for column, definition in self.ADDED_COLUMNS:
+            await self._db.ensure_column("members", column, definition)
 
     async def upsert(
         self, *, guild_id: int, user_id: int, username: str, display_name: str
@@ -69,25 +80,21 @@ class MemberStore:
             display_name[:100],
         )
 
-    async def set_birthday(self, *, guild_id: int, user_id: int, birthday: dt.date) -> bool:
-        """Save a member's birthday. Returns false only for an absent member row."""
-        changed = await self._db.execute(
-            "UPDATE members SET birthday=%s WHERE guild_id=%s AND user_id=%s",
-            birthday,
-            guild_id,
-            user_id,
-        )
-        return bool(changed)
+    async def description(self, *, guild_id: int, user_id: int) -> str | None:
+        """The line describing who this member is, for the chat persona.
 
-    async def clear_birthday(self, *, guild_id: int, user_id: int) -> bool:
-        """Forget a member's birthday while preserving their member record."""
-        changed = await self._db.execute(
-            "UPDATE members SET birthday=NULL "
-            "WHERE guild_id=%s AND user_id=%s AND birthday IS NOT NULL",
+        Written by hand in SQL, not by any command. Returns None for a member
+        with no description, which is the normal case.
+        """
+        row = await self._db.fetch_one(
+            "SELECT description FROM members WHERE guild_id=%s AND user_id=%s",
             guild_id,
             user_id,
         )
-        return bool(changed)
+        if not row:
+            return None
+        value = (row.get("description") or "").strip()
+        return value or None
 
     async def birthdays_on(
         self, *, guild_id: int, month_days: tuple[str, ...]

@@ -612,10 +612,15 @@ class MediaSearch(commands.Cog):
         results, notice = await self._fetch(anime=anime, filters=filters, skip_anilist=degraded)
 
         # The key is read on a *prediction* of who will answer, but this call
-        # may itself have flipped the breaker. Write under whoever actually
-        # answered, which is the key the next read will compute -- otherwise
-        # the first search of an outage caches under a key nothing ever reads.
-        answered_degraded = results[0].provider != "AniList" if results else degraded
+        # may itself have flipped the breaker. Re-read it and write under the
+        # key the next read will compute -- otherwise the first search of an
+        # outage caches under a key nothing ever reads.
+        #
+        # Read the breaker rather than inferring it from the provider that
+        # answered: MyAnimeList also answers when AniList is up but found
+        # nothing, and treating that as an outage would file the result under
+        # a key no subsequent read ever looks at.
+        answered_degraded = await self._anilist_is_down()
         write_key = _cache_key(anime=anime, filters=filters, degraded=answered_degraded)
 
         # Serialising happens here, outside Cache.set's own error handling, so
@@ -640,7 +645,17 @@ class MediaSearch(commands.Cog):
         if not skip_anilist:
             try:
                 results = await self.anilist.search(anime=anime, per_page=_PER_PAGE, **filters)
-                return rank_by_relevance(results, query), ""
+                if results or not query:
+                    # An empty *browse* really is empty; only a title search
+                    # gets a second opinion below.
+                    return rank_by_relevance(results, query), ""
+                # AniList answered, and found nothing. That is not the same as
+                # "no such title": its matching breaks on partial words, so
+                # "naru" and "naruto" each return ten while "narut" returns
+                # none, and "frier" returns none while MyAnimeList returns
+                # five. Autocomplete types a character at a time and lands on
+                # those gaps constantly, so ask MAL before giving up.
+                _log.debug("AniList found nothing for %r; asking MyAnimeList", query)
             except AniListUnavailableError as exc:
                 # A deliberate refusal, not a blip: stop asking for a while.
                 _log.warning("AniList unavailable, falling back to MyAnimeList: %s", exc)

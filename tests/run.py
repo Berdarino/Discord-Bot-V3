@@ -39,6 +39,7 @@ SUITE = [
     ("test_media", set()),
     ("test_members", set()),
     ("test_events", set()),
+    ("test_chat", set()),
     ("test_mal", {"network"}),
     ("test_tcg", {"network"}),
     ("test_tcg2", {"network"}),

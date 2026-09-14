@@ -101,6 +101,7 @@ src/discord_bot_v3/
 ├── cogs/           one module per feature — auto-discovered at startup
 │   ├── general.py  the public welcome on join — no commands
 │   ├── serverlog.py  member, message and moderation log — no commands
+│   ├── chat.py     the AI character, /forget — needs OLLAMA_URL
 │   ├── members.py  /birthday, member sync, daily birthday task
 │   ├── gif.py      /gif — needs KLIPY_API_KEY
 │   ├── media.py    /anime, /manga
@@ -115,6 +116,8 @@ src/discord_bot_v3/
     ├── tcgdex.py   TCGdex — Pokémon TCG Pocket
     ├── database.py MySQL/MariaDB pool (no schema of its own)
     ├── eventlog.py the log channel and its shared formatting
+    ├── ollama.py   local model client (no SDK, just aiohttp)
+    ├── chat.py     the persona, and per-user memory in Redis
     ├── cache.py    Redis cache (optional, best-effort)
     └── reminders.py reminders table + queries
 ```
@@ -129,8 +132,7 @@ src/discord_bot_v3/
 | `/pokemon sets list / get` | everyone | Browse Pokémon TCG Pocket sets. |
 | `/pokemon cards …` | everyone | `list`, `search`, `get`, `random`, `id` over TCG Pocket cards. |
 | `/pokemon update` | everyone | Refresh the cached TCGdex data (5 min cooldown). |
-| `/birthday set` | everyone | Save your birthday privately for this server. |
-| `/birthday remove` | everyone | Remove your saved birthday from this server. |
+| `/forget` | everyone | Make the bot forget your conversation so far. |
 | **Remind me in…** | everyone | Right-click a message → Apps. Reminder after an offset. |
 | **Remind me at…** | everyone | Right-click a message → Apps. Reminder at a wall-clock time. |
 | `/reminders` | everyone | List your pending reminders and cancel them. |
@@ -282,11 +284,13 @@ Only two things MAL genuinely cannot do: **country of origin** (it has no such
 field) and **`TV_SHORT`** (not in its vocabulary). Those *are* called out in a
 short ephemeral note, because nothing in the embed would reveal it.
 
-**On AniList's 403.** AniList answers some clients with `HTTP 403` and "The
-AniList API has been temporarily disabled due to severe stability issues." The
-block lifts if you send `Referer: https://anilist.co`, which would misrepresent
-the bot as their own website — so the client deliberately does not, and falls
-back to MyAnimeList instead.
+**On AniList's 403.** For a long stretch AniList answered this client with
+`HTTP 403` and "The AniList API has been temporarily disabled due to severe
+stability issues." **As of 2026-09-14 it answers normally again** and is the
+primary provider. The machinery below stays because the refusal can come back.
+The block lifts if you send `Referer: https://anilist.co`, which would
+misrepresent the bot as their own website — so the client deliberately does
+not, and falls back to MyAnimeList instead.
 
 Because that refusal is a standing condition rather than a blip, a 403 **opens a
 circuit breaker** in Redis for 30 minutes: subsequent searches skip AniList
@@ -300,6 +304,18 @@ that one call without opening the breaker, since it may be a passing fault.
 The breaker is also part of the cache key, so results fetched while AniList was
 down are not still being served once it recovers. Without Redis the breaker
 simply never opens and behaviour is exactly as it was before.
+
+**On empty AniList results.** A 403 is not the only way AniList can fail you.
+Its title matching breaks on partial words: `naru` and `naruto` each return ten
+titles, `narut` returns none; `frier` returns none while MyAnimeList returns
+five. Autocomplete types one character at a time and lands on those gaps
+constantly, so when AniList came back it silently emptied the suggestions.
+
+An empty AniList answer to a *title search* therefore falls through to
+MyAnimeList before giving up. An empty **browse** — no search term, just
+filters — is taken at face value, because there is no partial word to have
+tripped over. In practice you get AniList for anything it recognises and MAL to
+cover its gaps, which is visible in the footer of whichever embed answers.
 
 ### `/pokemon`
 
@@ -389,11 +405,18 @@ than retried forever on every tick.
 
 ### Birthdays
 
-`/birthday set` saves your own date of birth privately, per server; `/birthday
-remove` deletes it. The bot records member names when it starts and when someone
-joins, but it never imports birthdays from Discord because Discord does not
-provide them. A birthday is stored as a real date, while announcements use only
-its month and day, never revealing a person's age or birth year.
+**Birthdays are set by hand in SQL.** There is no command: for one small
+server, a row edit is less work than a command plus validation, and it means
+only someone with database access can change them.
+
+```sql
+UPDATE members SET birthday = '1995-03-07' WHERE user_id = 353165739852693506;
+```
+
+The bot records member names at startup and on join, but never imports
+birthdays — Discord does not have them. A birthday is stored as a real date;
+announcements use only the month and day, so nobody's age or birth year is
+revealed. Someone who has left the server is skipped rather than pinged.
 
 Set `BIRTHDAY_CHANNEL_ID` to the channel where announcements should appear. At
 midnight in `TIMEZONE`, the bot posts one greeting for each birthday belonging
@@ -475,6 +498,107 @@ fires the same event when a link unfurls or a message is pinned. Bot messages an
 DMs to the bot are never logged. The bot needs **Send Messages** in the log
 channel and **View Audit Log** in the server; entries carry the server name, so
 one channel can watch several.
+
+### The chat character
+
+The bot talks back. It runs a **local model through [Ollama](https://ollama.com)**,
+so nothing said in the server leaves the machine — no API key, no cost, and no
+third party reading your friends' messages.
+
+```bash
+ollama pull qwen3:8b     # about 5GB; the bot will not download it for you
+ollama serve
+```
+
+Then set `OLLAMA_URL` in `.env`. Without it the cog does not load and the bot
+never answers.
+
+**How you talk to it** — the rules are V2's:
+
+- **Reply** to one of its messages, in any channel. This is the main way, and it
+  is what makes it feel like a person rather than a command.
+- **Mention it** in `CHAT_CHANNEL_ID`, if you set one.
+- It ignores bots, DMs, and anything carrying `@everyone` or `@here`.
+
+**The character lives in `PERSONA`** in [`services/chat.py`](src/discord_bot_v3/services/chat.py),
+not in `.env` — it is several lines of prose, and tuning it belongs in a diff.
+
+**It treats people differently, from `members.description`.** That column is a
+line saying who someone is and how the bot should handle them, appended to the
+prompt for whoever it is replying to. Like birthdays, it is written by hand:
+
+```sql
+UPDATE members SET description = 'Your owner. You love him very much; he made
+you and you are grateful.' WHERE user_id = 353165739852693506;
+
+UPDATE members SET description = 'An electrical engineer at Sarawak Energy. You
+banter him about keeping the power on, or you would not exist.'
+WHERE user_id = ...;
+```
+
+A member with no description just gets the character on its own. The value is
+capped at 500 characters so one rambling row cannot crowd the persona out of a
+small model's attention.
+
+**It answers in the language you used.** Not because it is asked to — that
+does not work. Measured against `qwen3:8b`, three findings, in order of how
+much they matter:
+
+1. Asked in English with no history at all, it replied in Chinese **3 times out
+   of 3**. Qwen is trained heavily on Chinese and defaults to it.
+2. Adding an explicit "reply in English" line to the end of the system prompt
+   fixed that completely — **0 out of 3**.
+3. But replay a Chinese conversation history and that instruction loses again,
+   **3 out of 3**, no matter how it is worded. The history is simply louder
+   than the prompt.
+
+**Code-switching makes it worse again.** A single Chinese word in an English
+sentence — "eh why you so 兇", which is just how people here talk — pulls the
+model over. With only the system pin, that leaked Chinese **4 times in 10**.
+Repeating the instruction on the user's own turn as well brought it to **1 in
+10**; either pin alone sits at 4 in 10. Saying it twice looks redundant and is
+not.
+
+Telling it to *mirror* the mix instead was tried and is worse: every reply went
+full Chinese, one degenerated into repeating itself, and one produced Cantonese
+gibberish. An 8B cannot hold a mixed register.
+
+So the language is detected in code and applied three ways: pinned as the last
+line of the system prompt, repeated on the user turn, and used to drop replayed
+exchanges in the other language. End to end against a stored Chinese history,
+that is 6/6 correct across pure English, code-switched, and pure Chinese input.
+Remove any one of the three and it regresses.
+
+The reminder is added to the request only — what gets *remembered* is the clean
+message, or the instruction would pile up through the replayed history.
+
+**Memory is per-user and lives in Redis**, with an hour's TTL and a short replay
+window. It is derived data in the strongest sense — with Redis down the bot still
+replies, it just forgets what you said. `/forget` clears your own thread.
+
+**Why `qwen3:8b`:** the persona replies in Chinese and English. Qwen is trained
+heavily on Chinese; the Western models of this size are noticeably worse at it.
+8B is the floor for holding a character over several turns — below that it drifts
+within a message or two. On 18GB of unified memory, 14B is the practical ceiling
+if you want more.
+
+Four things worth knowing before you judge the output:
+
+- **The first reply after a pause is slow.** Ollama unloads a model after five
+  minutes; reloading 5GB can take half a minute. The client asks it to stay
+  resident for 30 minutes (`KEEP_ALIVE`), which mostly hides this.
+- **Replies are serialised.** A local model serves one generation at a time, so
+  the cog holds a lock and shows a typing indicator rather than firing several
+  at once and making everyone wait.
+- **Qwen3 thinks out loud.** `think: false` turns that off, but it has been
+  [unreliable](https://github.com/ollama/ollama/issues/12610) across Qwen3
+  builds, so `<think>` blocks are stripped as well. Without that, the bot posts
+  its own reasoning into the channel as its reply.
+- **It fails silently.** If Ollama is not running the bot says nothing and logs
+  why. A chat bot that announces its own stack traces to a room full of friends
+  is worse than one that occasionally does not answer.
+
+
 
 ## Storage: what goes where
 
