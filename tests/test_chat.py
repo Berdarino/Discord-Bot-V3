@@ -118,8 +118,10 @@ def main() -> None:
     assert described.index("grumpy") < described.index("grateful")
 
     # One rambling row must not crowd the character out of a small context.
+    # The headroom covers the fixed framing around the description, which names
+    # the speaker four times so the model cannot mistake them for a third party.
     huge = build_system(Person("Berd", "x" * 5000))
-    assert len(huge) < len(PERSONA) + MAX_DESCRIPTION + 100, len(huge)
+    assert len(huge) < len(PERSONA) + MAX_DESCRIPTION + 300, len(huge)
     print(f"   persona alone by default; description appended and capped at {MAX_DESCRIPTION}")
 
     print("== other people in the message ==")

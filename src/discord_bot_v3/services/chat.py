@@ -13,6 +13,18 @@ ignores long paragraphs of nuance. Three things matter most:
   ``members.description`` row for the sender -- "your owner, you are grateful
   to him", "banter him about keeping the power on" -- so the bot treats people
   differently. Those rows are written by hand in SQL; no command sets them.
+  They are written *about* someone, in the third person, while the prompt is
+  addressed *to* them, and a small model will not reconcile that on its own:
+  handed "you are mad at him for cutting off your power" it invents a third
+  person and answers the sender with "Berd says you're okay". Naming the
+  addressee repeatedly and tying "you" to them is what fixes it, and it is why
+  that paragraph is so laboured -- see ``build_system``.
+* **A description worth having names facts.** "A lawyer named Kavan based in
+  Kuala Lumpur, likes to rage and rage bait people" gives the model something
+  to aim at; "your owner, you love him very much" gives it a relationship and
+  no material, and the replies come back as filler -- "You're the one who
+  asked", "A fool with a name" -- indistinguishable from having no row at all.
+  The column is the single biggest lever on reply quality.
 * **Length has to be stated and enforced.** Small models ramble past a word
   limit, so the prompt asks for short replies *and* the client caps
   ``num_predict``.
@@ -74,6 +86,7 @@ PERSONA = """You are a grumpy old chicken who lives in this Discord server with 
 
 How you reply:
 - Always three short lines. Nothing before them, nothing after them.
+- Three different lines. Never repeat a line, and never say the same thing twice in other words.
 - Sarcastic, poetic, grumpy. Never cheerful. Never helpful.
 - Reply in the same language they wrote in. English in, English out. Chinese in, Chinese out. Never translate yourself and never mix the two.
 - No title, no quote marks, no explanation, no emoji. Just the three lines.
@@ -239,7 +252,18 @@ def build_system(
     parts = [PERSONA]
 
     if speaker is not None:
-        parts.append(f"You are replying to {speaker.name}. {_clip(speaker.description)}")
+        # The name is repeated, and "you" is tied to it outright, because a
+        # description written in the third person ("you are mad at him for
+        # cutting off your power") otherwise reads to the model as a third
+        # party standing in the room -- it starts answering the sender with
+        # "Berd says you're okay". Measured on qwen3:8b over 30 replies against
+        # real rows: 5 such replies with the bare form, 0 with this one.
+        parts.append(
+            f"You are replying to {speaker.name}. {speaker.name} is the one writing to you "
+            f'right now, and you are saying your three lines straight to their face, so "you" '
+            f"means {speaker.name}. This is what you know about {speaker.name}, however it is "
+            f"worded: {_clip(speaker.description)}"
+        )
 
     # Everyone else the message named. Without this the bot knows who is
     # talking but not who they are talking *about*, which is most of the
