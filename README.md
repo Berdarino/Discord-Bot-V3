@@ -1,27 +1,198 @@
-# Discord Bot V3
+<div id="top"/>
 
-A Discord bot built with [Pycord](https://docs.pycord.dev/) 2.8 on Python 3.14, managed with [uv](https://docs.astral.sh/uv/).
+[![LinkedIn][linkedin-shield]][linkedin-url]
+[![MIT License][license-shield]][license-url]
+[![Python][python-shield]][python-url]
+[![Pycord][pycord-shield]][pycord-url]
 
-## Setup
+
+<br />
+<div align="center">
+  <a href="https://discord.com">
+    <img src="https://discord.com/assets/3437c10597c1526c3dbd98c737c2bcae.svg" alt="Logo" width="80" height="80">
+  </a>
+
+  <h3 align="center">BokBokGeh Discord Bot V3</h3>
+
+  <p align="center">
+    A personal Discord server bot for fun, rebuilt from scratch on
+    <a href="https://github.com/Berdarino/Discord-Bot-V2">BokBokGeh Discord Bot V2</a>.
+    <br />
+    <br />
+    <a href="https://github.com/Berdarino/Discord-Bot-V3/issues">Report Bug</a>
+    ·
+    <a href="https://github.com/Berdarino/Discord-Bot-V3/issues">Request Feature</a>
+  </p>
+</div>
+
+
+<details>
+  <summary>Table of Contents</summary>
+  <ol>
+    <li><a href="#about-the-project">About The Project</a></li>
+    <li><a href="#features-at-a-glance">Features at a Glance</a></li>
+    <li><a href="#built-with">Built With</a></li>
+    <li><a href="#disclaimer">Disclaimer</a></li>
+    <li>
+      <a href="#getting-started">Getting Started</a>
+      <ul>
+        <li><a href="#prerequisites">Prerequisites</a></li>
+        <li><a href="#installation">Installation</a></li>
+        <li><a href="#running-locally">Running locally</a></li>
+        <li><a href="#linting-and-formatting">Linting and formatting</a></li>
+        <li><a href="#tests">Tests</a></li>
+        <li><a href="#deployment--docker-compose">Deployment — Docker Compose</a></li>
+        <li><a href="#do-not-run-both-at-once">Do not run both at once</a></li>
+      </ul>
+    </li>
+    <li><a href="#project-layout">Project Layout</a></li>
+    <li>
+      <a href="#usage">Usage</a>
+      <ul>
+        <li><a href="#commands">Commands</a></li>
+        <li><a href="#owner-only-commands">Owner-only commands</a></li>
+        <li><a href="#gif-and-klipy">/gif and KLIPY</a></li>
+        <li><a href="#anime-and-manga">/anime and /manga</a></li>
+        <li><a href="#pokemon">/pokemon</a></li>
+        <li><a href="#reminders">Reminders</a></li>
+        <li><a href="#birthdays">Birthdays</a></li>
+        <li><a href="#event-listeners">Event listeners</a></li>
+        <li><a href="#the-chat-character">The chat character</a></li>
+      </ul>
+    </li>
+    <li><a href="#scheduled-tasks">Scheduled Tasks</a></li>
+    <li><a href="#storage-what-goes-where">Storage: what goes where</a></li>
+    <li><a href="#persistence">Persistence</a></li>
+    <li>
+      <a href="#development-notes">Development Notes</a>
+      <ul>
+        <li><a href="#adding-a-command">Adding a command</a></li>
+        <li><a href="#pycord-gotchas">Pycord gotchas</a></li>
+        <li><a href="#odds-and-ends">Odds and ends</a></li>
+      </ul>
+    </li>
+    <li><a href="#roadmap">Roadmap</a></li>
+    <li><a href="#suggestion">Suggestion</a></li>
+    <li><a href="#license">License</a></li>
+    <li><a href="#contact">Contact</a></li>
+  </ol>
+</details>
+
+
+## About The Project
+
+[![Product Name Screen Shot][product-screenshot]](https://github.com/BernardWong97/Discord-Bot-V3)
+
+Welcome to <b>BokBokGeh Discord Bot V3</b>, a ground-up rewrite of my personal
+Discord bot.
+
+While there are many great Discord bots available on <a href="https://top.gg">top.gg</a>,
+none fit my needs perfectly. So I created this personalized bot to interact
+uniquely with my friends and provide humour that only we understand. It is a
+constant work in progress, and I enjoy exploring new capabilities introduced by
+<a href="https://pycord.dev/">**Pycord**</a> while improving my
+<a href="https://www.python.org/">**Python**</a> along the way.
+
+V3 keeps V2's personality and throws out its plumbing. What actually changed:
+
+| | V2 | V3 |
+|---|---|---|
+| AI | Langchain, hosted model | [Ollama](https://ollama.com) running a local model — no API key, no cost, nothing leaves the machine |
+| GIFs | Tenor | [KLIPY](https://klipy.com) — Tenor's public API is being sundowned |
+| Anime/manga | AniList only | AniList, falling back to MyAnimeList, behind one provider-neutral model |
+| Storage | ad hoc | MariaDB for what must survive, Redis for what is merely expensive to refetch |
+| Config | fixed environment variables | every integration optional, each one degrading on its own |
+| Packaging | manual venv | [uv](https://docs.astral.sh/uv/) + a two-stage Docker image |
+| Python | 3.x | 3.14 |
+
+The structural theme of the rewrite is that **nothing is mandatory except the
+bot token**. No KLIPY key means no `/gif` and a warning; no `OLLAMA_URL` means
+the chat cog never loads; no MySQL means reminders and birthdays sit out; Redis
+down means every cache call quietly no-ops. The bot starts either way.
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
+## Features at a Glance
+
+* A chat character running on a **local** model — replies in the language you wrote in, remembers you, and treats each person differently.
+* Slash commands for fun and utility, built around Discord's own UI — modals, autocomplete, select menus, paginators and confirmations rather than walls of text.
+* Integrations with AniList, MyAnimeList, TCGdex and KLIPY, each one optional and each one failing soft.
+* A server event log that records joins, leaves, edits, deletions and every moderator action, with the actor named where Discord will admit to one.
+* Scheduled tasks: birthday greetings, a nightly Pokédex refresh, and reminder delivery.
+* Personalizable for unique server experiences.
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
+## Built With
+
+* [Pycord](https://pycord.dev/) 2.8 — Discord API wrapper
+* [Python](https://www.python.org/) 3.14
+* [uv](https://docs.astral.sh/uv/) — dependency and environment management
+* [Ollama](https://ollama.com/) — the local model behind the chat character
+* [MariaDB](https://mariadb.org/) — durable storage
+* [Redis](https://redis.io/) — cache
+* [Docker](https://www.docker.com/) — deployment
+* [AniList](https://anilist.co/) and [MyAnimeList](https://myanimelist.net/) — anime and manga
+* [TCGdex](https://www.tcgdex.net/) — Pokémon TCG Pocket
+* [KLIPY](https://klipy.com/) — GIFs
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
+## Disclaimer
+
+This bot is designed for personal use and runs on my own Discord server, with a
+persona and member descriptions written for the people in it. Everything else is
+general-purpose, and the source is available under the MIT license — feel free to
+use and modify it as needed.
+
+Two things a license does not cover, and which are yours to check before you
+deploy this: the **terms of service of the APIs it calls** (KLIPY, AniList,
+MyAnimeList, TCGdex) grant you nothing by virtue of this repository, and the
+**model weights** you point Ollama at carry their own license.
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
+## Getting Started
+
+### Prerequisites
+
+Only [uv](https://docs.astral.sh/uv/getting-started/installation/) is required —
+it fetches Python 3.14 itself. Everything below is optional and enables one
+feature each:
+
+| Optional | Enables |
+|---|---|
+| [Ollama](https://ollama.com) + a pulled model | the chat character, and written birthday greetings |
+| MariaDB / MySQL | reminders and birthdays |
+| Redis | caching, and the AniList circuit breaker |
+| A [KLIPY](https://partner.klipy.com) key | `/gif` |
+| A [MyAnimeList](https://myanimelist.net/apiconfig) client id | the fallback for `/anime` and `/manga` |
+
+### Installation
 
 1. Create an application at the [Discord Developer Portal](https://discord.com/developers/applications),
    add a **Bot**, and copy its token.
-2. Configure the environment:
+2. Enable the **Server Members Intent** and **Message Content Intent** under the
+   bot's *Privileged Gateway Intents*. The bot requests both in code; Discord
+   withholds the events unless they are enabled there too.
+3. Configure the environment:
 
    ```bash
    cp .env.example .env
    # then edit .env and paste your token into DISCORD_TOKEN
    ```
 
-3. Invite the bot to a server. Under **OAuth2 → URL Generator**, select the
+4. Invite the bot to a server. Under **OAuth2 → URL Generator**, select the
    `bot` and `applications.commands` scopes, then open the generated URL.
-4. Put your server's id in `GUILD_IDS` (enable Developer Mode in Discord, then
+5. Put your server's id in `GUILD_IDS` (enable Developer Mode in Discord, then
    right-click the server → Copy Server ID). Commands appear instantly in those
    guilds; leaving it empty registers globally and can take up to an hour.
 
-## Running
-
-### Local development — uv
+### Running locally
 
 ```bash
 uv run python -m discord_bot_v3
@@ -61,6 +232,28 @@ If you ever widen the rule set, re-run the bot afterwards and confirm options
 still report their real types — this class of breakage is invisible to the
 linter and to startup, and only shows up in Discord's UI.
 
+### Tests
+
+The suite is a set of standalone asyncio scripts with `assert`s, not pytest
+cases. Most of them drive Discord objects or real APIs, where a fixture would
+hide more than it explains.
+
+```bash
+uv run python tests/run.py                # everything
+uv run python tests/run.py --offline      # no network, Redis or database
+uv run python tests/run.py test_media     # one test, full output
+```
+
+Several tests hit live services deliberately: every API quirk this bot works
+around was found by probing a real endpoint, and a mocked suite would happily
+keep passing after the API changed underneath it. The cost is that a failure may
+mean "the API moved" rather than "the code broke" — read the output before
+assuming a regression.
+
+The database tests use a separate `<MYSQL_DB>_test` database and drop their
+tables when they finish, so running them against `MYSQL_DB` would delete real
+reminders.
+
 ### Deployment — Docker Compose
 
 ```bash
@@ -86,7 +279,10 @@ docker compose down          # before working locally
 Discord permits the two sessions, so there is no error to warn you — the only
 symptom is duplicate replies.
 
-## Layout
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
+## Project Layout
 
 ```
 Dockerfile       two-stage build; runtime image carries only the venv
@@ -115,21 +311,32 @@ src/discord_bot_v3/
     ├── mal.py      MyAnimeList API v2 (fallback)
     ├── tcgdex.py   TCGdex — Pokémon TCG Pocket
     ├── database.py MySQL/MariaDB pool (no schema of its own)
+    ├── members.py  member records, birthdays and descriptions
     ├── eventlog.py the log channel and its shared formatting
     ├── ollama.py   local model client (no SDK, just aiohttp)
     ├── chat.py     the persona, and per-user memory in Redis
     ├── cache.py    Redis cache (optional, best-effort)
     └── reminders.py reminders table + queries
+
+tests/run.py     the suite runner; one script per feature beside it
 ```
 
-## Commands
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
+## Usage
+
+This bot is tailored to my server's needs. Below are its commands and the
+reasoning behind the ones that are not obvious.
+
+### Commands
 
 | Command | Who | What |
 |---------|-----|------|
 | `/gif` | everyone | Preview a GIF from KLIPY privately, shuffle, then post it. |
 | `/anime` | everyone | Search anime, with title autocomplete. AniList, falling back to MyAnimeList. |
 | `/manga` | everyone | Search manga, with title autocomplete. AniList, falling back to MyAnimeList. |
-| `/pokemon sets list / get` | everyone | Browse Pokémon TCG Pocket sets. |
+| `/pokemon sets list / get` | everyone | Browse Pokémon TCG Pocket sets. |
 | `/pokemon cards …` | everyone | `list`, `search`, `get`, `random`, `id` over TCG Pocket cards. |
 | `/pokemon update` | everyone | Refresh the cached TCGdex data (5 min cooldown). |
 | `/forget` | everyone | Make the bot forget your conversation so far. |
@@ -418,6 +625,12 @@ birthdays — Discord does not have them. A birthday is stored as a real date;
 announcements use only the month and day, so nobody's age or birth year is
 revealed. Someone who has left the server is skipped rather than pinged.
 
+**The bot writes the greeting itself** when Ollama is reachable, in character
+and using that person's `description` — the engineer gets *"hope your birthday
+cake doesn't short circuit"*. Once a year per person is worth a generation. If
+the model is down or unset it falls back to a fixed line, because a birthday
+cannot depend on a model being up.
+
 Set `BIRTHDAY_CHANNEL_ID` to the channel where announcements should appear. At
 midnight in `TIMEZONE`, the bot posts one greeting for each birthday belonging
 to that channel's server. Without the setting, birthdays can still be saved but
@@ -540,6 +753,15 @@ A member with no description just gets the character on its own. The value is
 capped at 500 characters so one rambling row cannot crowd the persona out of a
 small model's attention.
 
+**It also knows who you are talking about**, not just who is talking. Anyone
+you mention is looked up too, and their `@tag` is replaced with their name so
+the sentence still reads. Without that the bot misreads the room — told
+"Kenji watched anime again" it replied *"I don't care if you're watching
+anime"*, having assumed you meant yourself. With the mentioned people's rows in
+the prompt it answers *"AhBeng's wires are tangled, Kenji's anime…"* instead.
+Up to four people per message, so tagging half the server cannot bury the
+character.
+
 **It answers in the language you used.** Not because it is asked to — that
 does not work. Measured against `qwen3:8b`, three findings, in order of how
 much they matter:
@@ -598,6 +820,21 @@ Four things worth knowing before you judge the output:
   why. A chat bot that announces its own stack traces to a room full of friends
   is worse than one that occasionally does not answer.
 
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
+## Scheduled Tasks
+
+| Task | When | Notes |
+|---|---|---|
+| **Birthday greetings** | Midnight in `TIMEZONE` | One message per birthday in that server, written by the model when Ollama is up. Needs `BIRTHDAY_CHANNEL_ID`. |
+| **Pokédex refresh** | Every 24 hours | Rebuilds the TCGdex set and card index. `/pokemon update` forces it in between. |
+| **Reminder delivery** | Every 5 seconds | One indexed `remind_at <= now` query, so a reminder that came due while the bot was down still fires. |
+
+V2 polled reminders every second and matched the due time exactly. Both were
+changed here, for the reasons under [Reminders](#reminders).
+
+<p align="right">(<a href="#top">back to top</a>)</p>
 
 
 ## Storage: what goes where
@@ -605,19 +842,16 @@ Four things worth knowing before you judge the output:
 Two stores, with a clear split.
 
 **MariaDB holds anything the bot would be sad to lose** — reminders and member
-birthdays today, quotes later. **Redis holds only derived data**; losing it costs a
-few API calls and nothing else.
+birthdays. **Redis holds only derived data**; losing it costs a few API calls and
+nothing else.
 
 | Data | Store | Why |
 |---|---|---|
 | Reminders | MariaDB | Must survive anything. |
-
-The database tests use a separate `<MYSQL_DB>_test` database. They drop their
-tables when they finish, so running them against `MYSQL_DB` would delete real
-reminders.
-| Member birthdays | MariaDB | Opt-in data and daily lookup must survive restarts. |
+| Member birthdays and descriptions | MariaDB | Opt-in data and daily lookup must survive restarts. |
 | Pokémon set/card index | Redis, 26h | Rebuildable, but a cold start is 16 requests. |
 | Anime/manga search results | Redis, 15 min | Rebuildable; AniList rate-limits. |
+| Per-user chat memory | Redis, 1h | Losing it costs a forgotten conversation, nothing more. |
 | Paginators, pickers, confirmations | memory | Meaningless after a restart. |
 
 Both are optional and fail soft. With `REDIS_URL` unset — or Redis down — every
@@ -649,6 +883,9 @@ One trap worth recording: `Media` nests `FuzzyDate` dataclasses, and
 an `AttributeError`. `services/media.py` provides `to_cacheable` /
 `from_cacheable` for exactly this reason — use them rather than `asdict`.
 
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
 ## Persistence
 
 Features that need to remember things use MySQL (the dev and production hosts
@@ -677,7 +914,12 @@ Conventions for feature schemas, so they stay consistent:
   `MONTH`/`DAY` and `LPAD`, not `DATE_FORMAT`, whose specifiers can depend on
   `lc_time_names`.
 
-## Adding a command
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
+## Development Notes
+
+### Adding a command
 
 Drop a new module in `cogs/`. It is discovered automatically at startup; no
 registration list to update.
@@ -707,7 +949,7 @@ def setup(bot: discord.Bot) -> None:
     bot.add_cog(Fun(bot))
 ```
 
-## Pycord gotchas
+### Pycord gotchas
 
 Pycord is a fork of discord.py and most tutorials you find are for discord.py.
 Three differences bite hardest:
@@ -720,7 +962,7 @@ Three differences bite hardest:
   required string.
 - Cog commands use `@discord.slash_command()`, not `@bot.slash_command()`.
 
-## Notes
+### Odds and ends
 
 - On startup Pycord logs `PyNaCl, davey are not installed, voice will NOT be
   supported`. Harmless unless you need voice — for that, `uv add "py-cord[voice]"`.
@@ -730,3 +972,71 @@ Three differences bite hardest:
 - The container runs as the non-root user `bot` (uid 999).
 - `LOG_LEVEL=DEBUG` logs every HTTP call to Discord, which is very noisy. Use
   `INFO` unless you are actively debugging.
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
+## Roadmap
+
+- [x] Local AI chat character with per-user memory and language matching
+- [x] Owner commands (`/send`, `/delete`, delete-up-to-here)
+- [x] KLIPY GIF search with a private preview
+- [x] AniList integration, with a MyAnimeList fallback
+- [x] TCGdex integration for Pokémon TCG Pocket
+- [x] Reminders that survive a restart
+- [x] Birthdays, written in character
+- [x] Server event log
+- [x] Redis caching and the AniList circuit breaker
+- [x] Docker Compose deployment
+
+For the full list of proposed features and known issues, see
+[open issues](https://github.com/Berdarino/Discord-Bot-V3/issues).
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
+## Suggestion
+
+Your feedback is invaluable! To suggest improvements or request features:
+
+1. Open an issue on GitHub with the `enhancement` tag.
+2. Don't forget to give this project a star if you find it useful!
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
+## License
+
+Distributed under the MIT License. See [`LICENSE`](LICENSE) for more information.
+
+The MIT license covers **this bot's source code only**. It grants you nothing in
+respect of the services it talks to or the model it runs — see
+[Disclaimer](#disclaimer).
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
+## Contact
+
+LinkedIn: [Bernard Wong][linkedin-url]
+
+GitHub: [Berdarino][github-me]
+
+Email: [contact@bernardwong.dev](contact@bernardwong.dev)
+
+Project Link: [GitHub Repository][github-bot]
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
+
+[license-shield]: https://img.shields.io/badge/License-MIT-blue?style=for-the-badge
+[license-url]: https://github.com/Berdarino/Discord-Bot-V3/blob/main/LICENSE
+[linkedin-shield]: https://img.shields.io/badge/LinkedIn-World?style=for-the-badge&logo=linkedin&color=0A66C2
+[linkedin-url]: https://www.linkedin.com/in/bernard-wong-404231152/
+[python-shield]: https://img.shields.io/badge/Python-3.14-3776AB?style=for-the-badge&logo=python&logoColor=white
+[python-url]: https://www.python.org/
+[pycord-shield]: https://img.shields.io/badge/Pycord-2.8-5865F2?style=for-the-badge&logo=discord&logoColor=white
+[pycord-url]: https://pycord.dev/
+[github-bot]: https://github.com/Berdarino/Discord-Bot-V3
+[github-me]: https://github.com/Berdarino
+[product-screenshot]: attachments/profile_picture.jpeg

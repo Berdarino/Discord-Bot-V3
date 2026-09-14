@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 import discord
 from discord.ext import commands, tasks
 
+from ..services.chat import birthday_greeting
 from ..services.members import BirthdayMember, MemberStore
 
 _log = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ class Members(commands.Cog):
         self.store = store
         self.zone = ZoneInfo(bot.config.timezone)
         self._ready = False
+        self._guild_id = 0
         self.announce_birthdays.change_interval(time=dt.time(hour=0, tzinfo=self.zone))
         self.announce_birthdays.start()
 
@@ -54,6 +56,9 @@ class Members(commands.Cog):
                 _log.error("BIRTHDAY_CHANNEL_ID %s is not a guild text channel", channel_id)
                 return
 
+            # Stashed for `_description_of`, which runs per member below.
+            self._guild_id = guild.id
+
             today = dt.datetime.now(self.zone).date()
             birthdays = await self.store.birthdays_on(
                 guild_id=guild.id, month_days=_birthday_keys(today)
@@ -67,7 +72,7 @@ class Members(commands.Cog):
                     continue
                 await channel.send(
                     f"Happy birthday, <@{member.user_id}>! 🎉",
-                    embed=_birthday_embed(member),
+                    embed=await self._greeting(member),
                     allowed_mentions=discord.AllowedMentions(users=True),
                 )
                 # Keep the GIF in a separate message: Discord can unfurl it
@@ -77,6 +82,32 @@ class Members(commands.Cog):
                 )
         except Exception:
             _log.exception("Could not announce today's birthdays")
+
+    async def _greeting(self, member: BirthdayMember) -> discord.Embed:
+        """The bot's own words if it can manage them, a fixed line if not.
+
+        Once a year per person is exactly the moment worth spending a
+        generation on, and the character already knows who they are. But a
+        birthday cannot depend on a model being up, so this falls back rather
+        than failing.
+        """
+        if self.bot.ollama is not None:
+            spoken = await birthday_greeting(
+                self.bot.ollama,
+                name=member.display_name,
+                description=await self._description_of(member),
+            )
+            if spoken:
+                return _birthday_embed(member, spoken)
+        return _birthday_embed(member)
+
+    async def _description_of(self, member: BirthdayMember) -> str | None:
+        """The birthday member's own row, so the greeting is about them."""
+        try:
+            return await self.store.description(guild_id=self._guild_id, user_id=member.user_id)
+        except Exception:
+            _log.exception("Could not read the description for %s", member.user_id)
+            return None
 
     @announce_birthdays.before_loop
     async def _before_announce_birthdays(self) -> None:
@@ -130,13 +161,23 @@ def _is_leap_year(year: int) -> bool:
     return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
 
 
-def _birthday_embed(member: BirthdayMember) -> discord.Embed:
-    """Create a public greeting without exposing the member's age or birth year."""
+def _birthday_embed(member: BirthdayMember, spoken: str | None = None) -> discord.Embed:
+    """A public greeting that never exposes the member's age or birth year.
+
+    ``spoken`` is the bot's own words when the model produced some, shown as
+    written because being in character is the point. Anything in it that looks
+    like a mention is inert: Discord does not resolve mentions inside an embed,
+    so the model cannot ping the server no matter what it writes. The one real
+    ping is the ``<@id>`` in the message content beside it.
+    """
+    described = (
+        spoken.strip()
+        if spoken
+        else f"Wishing **{discord.utils.escape_markdown(member.display_name)}** a wonderful day!"
+    )
     return discord.Embed(
         title="Happy birthday!",
-        description=(
-            f"Wishing **{discord.utils.escape_markdown(member.display_name)}** a wonderful day!"
-        ),
+        description=described[:2000],
         colour=discord.Colour.magenta(),
     )
 

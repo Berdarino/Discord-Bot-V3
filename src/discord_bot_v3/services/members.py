@@ -96,6 +96,28 @@ class MemberStore:
         value = (row.get("description") or "").strip()
         return value or None
 
+    async def descriptions(self, *, guild_id: int, user_ids: list[int]) -> dict[int, str]:
+        """Look up several members' descriptions in one query.
+
+        One statement rather than one per mention: a message can name a handful
+        of people, and the reply is already waiting on a local model.
+        """
+        if not user_ids:
+            return {}
+        placeholders = ", ".join("%s" for _ in user_ids)
+        rows = await self._db.fetch_all(
+            "SELECT user_id, description FROM members "
+            f"WHERE guild_id=%s AND user_id IN ({placeholders}) AND description IS NOT NULL",
+            guild_id,
+            *user_ids,
+        )
+        found = {}
+        for row in rows:
+            text = (row.get("description") or "").strip()
+            if text:
+                found[int(row["user_id"])] = text
+        return found
+
     async def birthdays_on(
         self, *, guild_id: int, month_days: tuple[str, ...]
     ) -> list[BirthdayMember]:

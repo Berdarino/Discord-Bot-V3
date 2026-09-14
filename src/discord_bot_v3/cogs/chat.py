@@ -38,6 +38,7 @@ from ..services.chat import (
     MAX_TOKENS,
     TEMPERATURE,
     ChatMemory,
+    Person,
     build_system,
     detect_language,
     pin_language,
@@ -60,6 +61,8 @@ class Chat(commands.Cog):
 
     def __init__(self, bot: discord.Bot, client: OllamaClient) -> None:
         self.bot = bot
+        # Owned by the bot, which closes it; the birthday announcer uses the
+        # same one.
         self.client = client
         self.memory = ChatMemory(bot.cache)
         # None without MySQL. Chat still works; the bot just does not know who
@@ -67,17 +70,13 @@ class Chat(commands.Cog):
         self.members = MemberStore(bot.db) if bot.db is not None else None
         self._lock = asyncio.Lock()
 
-    def cog_unload(self) -> None:
-        # The cog owns the aiohttp session, so it has to close it.
-        self.bot.loop.create_task(self.client.close())
-
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         """Answer when replied to, or when mentioned in the chat channel."""
         if not self._should_answer(message):
             return
 
-        prompt = _strip_mentions(message.content)
+        prompt = _render_mentions(message, self.bot.user.id)
         if len(prompt) < _MIN_PROMPT:
             return
 
@@ -85,7 +84,8 @@ class Chat(commands.Cog):
         # English mid-thread should get English back, even though the
         # replayed history is still full of Chinese.
         language = detect_language(prompt)
-        system = build_system(await self._describe(message), language)
+        speaker, others = await self._people(message)
+        system = build_system(speaker, others, language)
         # The replayed turns are filtered to the same language. The system
         # instruction alone loses to a history in the other one -- measured, not
         # assumed; see `ChatMemory.history`.
@@ -130,21 +130,37 @@ class Chat(commands.Cog):
         await self.memory.remember(message.author.id, asked=prompt, replied=reply)
         _log.info("Replied to %s in #%s (%s)", message.author, message.channel, sent.id)
 
-    async def _describe(self, message: discord.Message) -> str | None:
-        """Look up who this is, so the bot can treat them accordingly.
+    async def _people(self, message: discord.Message) -> tuple[Person | None, list[Person]]:
+        """Who is talking, and who they are talking about.
 
-        Best-effort on purpose: a database that is down or a member with no row
-        yet should cost the reply its flavour, not the reply itself.
+        The second half is what lets the bot banter across the group rather
+        than one-to-one: without it, "he never fixes anything" names someone it
+        has never heard of.
+
+        Best-effort on purpose: a database that is down, or people with no rows
+        yet, should cost the reply its flavour, not the reply itself.
         """
         if self.members is None:
-            return None
+            return None, []
+
+        mentioned = [
+            user
+            for user in message.mentions
+            if user.id not in (message.author.id, self.bot.user.id) and not user.bot
+        ]
+        wanted = [message.author.id, *(u.id for u in mentioned)]
+
         try:
-            return await self.members.description(
-                guild_id=message.guild.id, user_id=message.author.id
-            )
+            found = await self.members.descriptions(guild_id=message.guild.id, user_ids=wanted)
         except Exception:
-            _log.exception("Could not read the description for %s", message.author.id)
-            return None
+            _log.exception("Could not read member descriptions in %s", message.guild.id)
+            return None, []
+
+        speaker = None
+        if message.author.id in found:
+            speaker = Person(_name(message.author), found[message.author.id])
+        others = [Person(_name(u), found[u.id]) for u in mentioned if u.id in found]
+        return speaker, others
 
     def _should_answer(self, message: discord.Message) -> bool:
         """V2's trigger rules, in the order that rejects fastest."""
@@ -184,14 +200,30 @@ def _is_reply_to(message: discord.Message, user_id: int) -> bool:
     return isinstance(resolved, discord.Message) and resolved.author.id == user_id
 
 
-def _strip_mentions(content: str) -> str:
-    """Drop the mention that summoned the bot, leaving what was actually said."""
-    return _MENTION.sub("", content or "").strip()
+def _name(user: discord.abc.User) -> str:
+    """What to call someone in the prompt: what the server calls them."""
+    return getattr(user, "display_name", None) or user.name
+
+
+def _render_mentions(message: discord.Message, bot_id: int) -> str:
+    """Drop the bot's own mention; turn everyone else's into their name.
+
+    Deleting every mention leaves the model a sentence full of holes -- "why
+    does never fix anything" -- with no way to connect the descriptions it was
+    handed to the person being complained about. Substituting the display name
+    keeps the sentence intact and matches what the prompt calls them.
+    """
+    content = message.content or ""
+    for user in message.mentions:
+        if user.id == bot_id:
+            continue
+        content = re.sub(rf"<@!?{user.id}>", _name(user), content)
+    return _MENTION.sub("", content).strip()
 
 
 def setup(bot: discord.Bot) -> None:
     """Load only when an Ollama server is configured."""
-    if bot.config.ollama_url is None:
+    if bot.ollama is None:
         _log.warning("Chat disabled: OLLAMA_URL is not configured")
         return
-    bot.add_cog(Chat(bot, OllamaClient(bot.config.ollama_url, bot.config.ollama_model)))
+    bot.add_cog(Chat(bot, bot.ollama))

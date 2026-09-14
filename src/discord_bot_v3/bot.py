@@ -12,6 +12,7 @@ from . import cogs
 from .config import Config
 from .services.cache import Cache
 from .services.database import Database, DatabaseError
+from .services.ollama import OllamaClient
 
 _log = logging.getLogger(__name__)
 
@@ -33,6 +34,13 @@ class DiscordBot(discord.Bot):
         # Always present, but a no-op unless REDIS_URL is set and reachable.
         # Cogs can use it unconditionally.
         self.cache = Cache(config.redis_url)
+
+        # Shared, because two features talk to the model: the chat cog and
+        # the birthday announcer. One client means one aiohttp session and one
+        # place that closes it. None when OLLAMA_URL is unset.
+        self.ollama: OllamaClient | None = None
+        if config.ollama_url is not None:
+            self.ollama = OllamaClient(config.ollama_url, config.ollama_model)
 
         self.db: Database | None = None
         if config.mysql is not None:
@@ -107,9 +115,11 @@ class DiscordBot(discord.Bot):
         await super().start(*args, **kwargs)
 
     async def close(self) -> None:
-        """Close the database alongside the gateway connection."""
+        """Close everything the bot owns alongside the gateway connection."""
         if self.db is not None:
             await self.db.close()
+        if self.ollama is not None:
+            await self.ollama.close()
         await self.cache.close()
         await super().close()
 

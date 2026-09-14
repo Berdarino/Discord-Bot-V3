@@ -10,12 +10,14 @@ import types
 
 import discord
 
-from discord_bot_v3.cogs.chat import _is_reply_to, _strip_mentions
+from discord_bot_v3.cogs.chat import _is_reply_to, _render_mentions
 from discord_bot_v3.services.chat import (
     MAX_DESCRIPTION,
+    MAX_OTHERS,
     MAX_TURNS,
     PERSONA,
     ChatMemory,
+    Person,
     build_system,
     detect_language,
     pin_language,
@@ -56,13 +58,31 @@ def main() -> None:
     assert strip_thinking("   ") == ""
     print("   closed, orphaned and unclosed think tags all stripped")
 
-    print("== stripping the mention that summoned it ==")
-    assert _strip_mentions("<@123> what is this") == "what is this"
-    assert _strip_mentions("<@!123> hi") == "hi", "legacy nickname mention"
-    assert _strip_mentions("hey <@123> hello") == "hey  hello".replace("  ", "  ")
-    assert _strip_mentions("<@123>") == "", "a bare tag leaves nothing to answer"
-    assert _strip_mentions(None) == ""
-    print("   mentions removed; a bare tag yields an empty prompt")
+    print("== rendering the mentions in a message ==")
+
+    def spoke(content, mentions=()):
+        return types.SimpleNamespace(content=content, mentions=list(mentions))
+
+    def who(uid, name):
+        return types.SimpleNamespace(id=uid, display_name=name, name=name, bot=False)
+
+    bot_id = 7
+    assert _render_mentions(spoke("<@7> what is this"), bot_id) == "what is this"
+    assert _render_mentions(spoke("<@!7> hi"), bot_id) == "hi", "legacy nickname mention"
+    assert _render_mentions(spoke("<@7>"), bot_id) == "", "a bare tag leaves nothing to answer"
+    assert _render_mentions(spoke(None), bot_id) == ""
+
+    # Other people become their names. Deleting them would leave the model a
+    # sentence with a hole where the person it was told about should be.
+    beng = who(99, "AhBeng")
+    assert (
+        _render_mentions(spoke("<@7> <@99> never fixes it", [beng]), bot_id)
+        == "AhBeng never fixes it"
+    )
+    assert _render_mentions(spoke("<@!99> is late", [beng]), bot_id) == "AhBeng is late"
+    two = _render_mentions(spoke("<@99> and <@100> argue", [beng, who(100, "Kenji")]), bot_id)
+    assert two == "AhBeng and Kenji argue", two
+    print("   the bot's own tag is dropped; everyone else becomes their name")
 
     print("== replying to the bot ==")
 
@@ -87,18 +107,38 @@ def main() -> None:
     print("== system prompt ==")
     assert build_system() == PERSONA, "no description means the character alone"
     assert build_system(None) == PERSONA
-    assert build_system("   ") == PERSONA, "a blank row must not add an empty section"
 
-    described = build_system("Your owner. You are grateful to him.")
+    berd = Person("Berd", "Your owner. You are grateful to him.")
+    described = build_system(berd)
     assert PERSONA in described
-    assert "Your owner. You are grateful to him." in described
+    assert "Berd" in described and "grateful to him" in described
     # The persona has to come first, or a long description buries the character.
     assert described.index("grumpy") < described.index("grateful")
 
     # One rambling row must not crowd the character out of a small context.
-    huge = build_system("x" * 5000)
+    huge = build_system(Person("Berd", "x" * 5000))
     assert len(huge) < len(PERSONA) + MAX_DESCRIPTION + 100, len(huge)
     print(f"   persona alone by default; description appended and capped at {MAX_DESCRIPTION}")
+
+    print("== other people in the message ==")
+    eng = Person("AhBeng", "An engineer at Sarawak Energy.")
+    weeb = Person("Kenji", "A huge otaku.")
+    group = build_system(berd, (eng, weeb))
+    # Without this the bot knows who is talking but not who they mean, and
+    # reads "Kenji watched anime" as the speaker watching anime.
+    assert "AhBeng" in group and "Sarawak Energy" in group
+    assert "Kenji" in group and "A huge otaku." in group
+    # The speaker still comes first; the others are context, not the subject.
+    assert group.index("Berd") < group.index("AhBeng")
+
+    # A message tagging half the server must not bury the character.
+    crowd = [Person(f"P{i}", f"person {i}") for i in range(20)]
+    capped = build_system(berd, crowd)
+    assert f"P{MAX_OTHERS}" not in capped, "more than MAX_OTHERS leaked in"
+    assert "P0" in capped
+    # Someone with an empty row adds a name and nothing worth saying.
+    assert "Ghost" not in build_system(berd, (Person("Ghost", "   "),))
+    print(f"   up to {MAX_OTHERS} others listed after the speaker; blank rows skipped")
 
     print("== language detection ==")
     assert detect_language("what did you eat today") == "English"
@@ -115,13 +155,13 @@ def main() -> None:
     print("   English, Chinese, and 'no signal' all distinguished")
 
     print("== the language pin ==")
-    pinned = build_system(None, "English")
+    pinned = build_system(None, (), "English")
     assert "Reply in English only" in pinned
     # Last, because it is the instruction most likely to be disobeyed and a
     # small model weights what is nearest its output.
     assert pinned.strip().splitlines()[-1].startswith("They wrote to you in English")
-    assert build_system(None, None) == PERSONA, "no signal means no pin"
-    both = build_system("Your owner.", "Chinese")
+    assert build_system() == PERSONA, "no signal means no pin"
+    both = build_system(Person("Berd", "Your owner."), (), "Chinese")
     assert both.index("Your owner.") < both.index("Reply in Chinese only")
     print("   pin lands last, after the persona and the description")
 
