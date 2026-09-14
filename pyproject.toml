@@ -3,8 +3,10 @@ name = "discord-bot-v3"
 version = "0.1.0"
 description = "A Discord bot built with Pycord"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
-    { name = "PCloud-Bernard", email = "pcloud.bernard@gmail.com" }
+    { name = "Bernard Wong", email = "ben.wc88@gmail.com" }
 ]
 requires-python = ">=3.14"
 dependencies = [
